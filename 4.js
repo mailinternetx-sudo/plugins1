@@ -142,7 +142,6 @@
             Lampa.Notification.show('Выбранный парсер не найден', 3000);
             return;
         }
-        // Используем стандартный механизм Lampa для торрентов
         if (Lampa.Torrent && Lampa.Torrent.play) {
             Lampa.Torrent.play(item.magnet, {
                 title: item.search_title || item.title,
@@ -154,7 +153,6 @@
                 type: 'torrent'
             });
         } else {
-            // Fallback: открыть как обычное видео
             Lampa.Activity.push({
                 component: 'movie',
                 title: item.search_title || item.title,
@@ -174,7 +172,6 @@
         let magnetOnly = Lampa.Storage.get('v10_3_magnet_only') || false;
 
         component.create = function () {
-            // Вкладки
             tabs = new Lampa.Tabs({
                 tabs: [
                     { title: Lampa.Lang.translate('v10_3_top'), value: 'top' },
@@ -192,7 +189,6 @@
             });
             component.html(tabs.render());
 
-            // Панель фильтров + выбор парсера (Netflix-стиль)
             filtersBar = $('<div class="v10-3-filters" style="display:flex; justify-content:space-between; padding:10px 20px; background:#111; color:#fff; flex-wrap:wrap;"></div>');
             const leftGroup = $('<div style="display:flex; gap:20px;"></div>');
             const rightGroup = $('<div style="display:flex; gap:20px;"></div>');
@@ -226,7 +222,6 @@
 
             leftGroup.append(seedsEl, sortEl, magnetEl);
 
-            // Выпадающий список парсеров
             const parserId = getSelectedParser();
             const parsers = getActiveParsers();
             const parserTitle = parsers.find(p => p.id === parserId)?.name || parserId || 'Не выбран';
@@ -311,7 +306,7 @@
             filteredList.forEach(item => {
                 const card = Lampa.Card.create(item, { large: true });
                 card.onHover = () => Lampa.Player?.preview?.(item.search_title || item.title, item.year);
-                card.onEnter = () => playTorrent(item); // Используем новый метод с парсером
+                card.onEnter = () => playTorrent(item);
                 scroll.append(card);
             });
         }
@@ -333,7 +328,7 @@
         $('.menu .menu__list').eq(0).append(btn);
     }
 
-    // ==================== Регистрация компонента и инициализация ====================
+    // ==================== Регистрация и инициализация ====================
     function init() {
         Lampa.Component.add('v10_3_rutor_netflix', V10_3_RutorNetflix);
         addMenuButton();
