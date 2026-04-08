@@ -6,7 +6,7 @@
 
     var SHEETS_API = 'https://script.google.com/macros/s/AKfycbzkG8EzY7yw2DFwK2tPcKfc5YS1opFKBRcjI6BX6SGmYOwB0NmFHDCkmRNy6kGbErAY/exec';
 
-    var MAX_ITEMS = 15;  // уменьшен лимит с 20 до 15
+    var MAX_ITEMS = 15;
     var TMDB_CACHE_TIME = 60 * 60 * 24;
 
     var ICON = '<svg width="512" height="512" viewBox="0 0 512 512"><circle cx="256" cy="256" r="200" fill="currentColor"/></svg>';
@@ -20,25 +20,16 @@
         { title: 'Телевизор', sheet: 'Телевизор' }
     ];
 
-    // Глобальный пул запросов
     var REQUEST_POOL = {};
 
-    // Функция очистки названия
     function cleanTitle(title) {
         if (!title) return '';
 
         title = title.toString();
 
-        // убираем (2026) и всё после
         title = title.replace(/\(\d{4}\).*/, '');
-
-        // убираем качество и мусор
         title = title.replace(/\b(2160p|1080p|720p|HDR|BDRip|WEB-DL|BluRay|HEVC|H264|x264|x265)\b/gi, '');
-
-        // убираем лишние символы
         title = title.replace(/[\[\]\|]/g, '');
-
-        // убираем лишние пробелы
         title = title.replace(/\s+/g, ' ').trim();
 
         return title;
@@ -56,20 +47,17 @@
         Lampa.Storage.cache(getCacheKey(title), TMDB_CACHE_TIME, data);
     }
 
-    // Обновлённая searchTMDB с пулом запросов
     function searchTMDB(title, callback) {
         if (!title) {
             callback(null);
             return;
         }
 
-        // если уже запрашивается — ждём
         if (REQUEST_POOL[title]) {
             REQUEST_POOL[title].push(callback);
             return;
         }
 
-        // если есть в кэше
         var cached = getFromCache(title);
         if (cached) {
             callback(cached);
@@ -105,17 +93,13 @@
         self.network = new Lampa.Reguest();
 
         self.category = function (params, onSuccess, onError) {
-
             var parts = [];
 
             RUTOR_CATEGORIES.forEach(function (cat) {
-
                 parts.push(function (callback) {
-
                     var url = SHEETS_API + '?sheet=' + encodeURIComponent(cat.sheet);
 
                     self.network.silent(url, function (json) {
-
                         if (!json || !Array.isArray(json)) {
                             callback({ results: [] });
                             return;
@@ -141,20 +125,28 @@
 
                             var item = json[index];
                             var rawTitle = item.title || item.name || item;
-                            var title = cleanTitle(rawTitle);  // применяем очистку
+                            var title = cleanTitle(rawTitle);
 
                             searchTMDB(title, function (tmdb) {
                                 results.push({
-                                    id: tmdb ? tmdb.id : index + '_' + cat.sheet,
-                                    title: title,
-                                    name: title,
-                                    original_title: title,
+                                    id: tmdb && tmdb.id ? tmdb.id : index + '_' + cat.sheet,
+
+                                    title: tmdb ? (tmdb.title || tmdb.name) : title,
+                                    name: tmdb ? (tmdb.name || tmdb.title) : title,
+
+                                    original_title: tmdb ? (tmdb.original_title || tmdb.original_name) : title,
+
                                     overview: tmdb ? tmdb.overview : '',
-                                    poster_path: tmdb ? tmdb.poster_path : '',
+                                    poster_path: tmdb && tmdb.poster_path ? tmdb.poster_path : '/img/img_broken.svg',
                                     backdrop_path: tmdb ? tmdb.backdrop_path : '',
+
                                     vote_average: tmdb ? tmdb.vote_average : 0,
-                                    type: tmdb && tmdb.media_type ? tmdb.media_type : 'movie',
-                                    source: SOURCE_NAME
+                                    release_date: tmdb ? tmdb.release_date : '',
+                                    first_air_date: tmdb ? tmdb.first_air_date : '',
+
+                                    media_type: tmdb && tmdb.media_type ? tmdb.media_type : 'movie',
+
+                                    source: 'tmdb'
                                 });
                                 index++;
                                 next();
@@ -162,7 +154,6 @@
                         }
 
                         next();
-
                     }, function () {
                         callback({ results: [] });
                     });
@@ -178,6 +169,7 @@
         };
 
         self.full = function (params, onSuccess, onError) {
+            params.source = 'tmdb';
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
 
@@ -215,7 +207,6 @@
             });
         });
 
-        // авто редирект если выбран источник
         var origSet = Lampa.Storage.set;
 
         Lampa.Storage.set = function (key, value) {
