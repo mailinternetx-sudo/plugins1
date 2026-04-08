@@ -4,7 +4,7 @@
     var DEFAULT_SOURCE_NAME = 'RUTOR';
     var SOURCE_NAME = DEFAULT_SOURCE_NAME;
 
-    var SHEETS_API = 'https://script.google.com/macros/s/AKfycbzuSvL74d-B3pDYIa4dnfwDgazr5QOOxhIUbxDd3m_RMx9geJTLcmHQgRNZCrqW0YRb/exec';
+    var SHEETS_API = 'https://script.google.com/macros/s/AKfycbzkG8EzY7yw2DFwK2tPcKfc5YS1opFKBRcjI6BX6SGmYOwB0NmFHDCkmRNy6kGbErAY/exec';
 
     var MAX_ITEMS = 20;
     var TMDB_CACHE_TIME = 60 * 60 * 24;
