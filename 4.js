@@ -24,14 +24,14 @@
 
     function cleanTitle(title) {
         if (!title) return '';
-
         title = title.toString();
-
+        // убираем год в скобках и всё после
         title = title.replace(/\(\d{4}\).*/, '');
+        // убираем качество
         title = title.replace(/\b(2160p|1080p|720p|HDR|BDRip|WEB-DL|BluRay|HEVC|H264|x264|x265)\b/gi, '');
+        // убираем лишние символы
         title = title.replace(/[\[\]\|]/g, '');
         title = title.replace(/\s+/g, ' ').trim();
-
         return title;
     }
 
@@ -52,38 +52,31 @@
             callback(null);
             return;
         }
-
+        if (!Lampa.Api.sources.tmdb) {
+            console.warn('TMDB source not ready');
+            callback(null);
+            return;
+        }
         if (REQUEST_POOL[title]) {
             REQUEST_POOL[title].push(callback);
             return;
         }
-
         var cached = getFromCache(title);
         if (cached) {
             callback(cached);
             return;
         }
-
         REQUEST_POOL[title] = [callback];
-
         Lampa.Api.sources.tmdb.search({
             query: title,
             page: 1
         }, function (data) {
-            var result = null;
-            if (data && data.results && data.results.length) {
-                result = data.results[0];
-            }
+            var result = (data && data.results && data.results.length) ? data.results[0] : null;
             saveToCache(title, result);
-
-            REQUEST_POOL[title].forEach(function (cb) {
-                cb(result);
-            });
+            REQUEST_POOL[title].forEach(function (cb) { cb(result); });
             delete REQUEST_POOL[title];
         }, function () {
-            REQUEST_POOL[title].forEach(function (cb) {
-                cb(null);
-            });
+            REQUEST_POOL[title].forEach(function (cb) { cb(null); });
             delete REQUEST_POOL[title];
         });
     }
@@ -98,62 +91,50 @@
             RUTOR_CATEGORIES.forEach(function (cat) {
                 parts.push(function (callback) {
                     var url = SHEETS_API + '?sheet=' + encodeURIComponent(cat.sheet);
-
                     self.network.silent(url, function (json) {
+                        console.log('Response from', cat.sheet, json);
                         if (!json || !Array.isArray(json)) {
                             callback({ results: [] });
                             return;
                         }
-
                         json = json.slice(0, MAX_ITEMS);
-
-                        var results = [];
-                        var index = 0;
-
-                        function next() {
-                            if (index >= json.length) {
-                                callback({
-                                    title: cat.title,
-                                    url: cat.sheet,
-                                    results: results,
-                                    page: 1,
-                                    total_pages: 1,
-                                    total_results: results.length
-                                });
-                                return;
-                            }
-
-                            var item = json[index];
+                        var results = new Array(json.length);
+                        var pending = json.length;
+                        if (pending === 0) {
+                            callback({ results: [], title: cat.title, url: cat.sheet, page: 1, total_pages: 1, total_results: 0 });
+                            return;
+                        }
+                        json.forEach(function (item, idx) {
                             var rawTitle = item.title || item.name || item;
                             var title = cleanTitle(rawTitle);
-
                             searchTMDB(title, function (tmdb) {
-                                results.push({
-                                    id: tmdb && tmdb.id ? tmdb.id : index + '_' + cat.sheet,
-
+                                results[idx] = {
+                                    id: (tmdb && tmdb.id) ? tmdb.id : idx + '_' + cat.sheet,
                                     title: tmdb ? (tmdb.title || tmdb.name) : title,
                                     name: tmdb ? (tmdb.name || tmdb.title) : title,
-
                                     original_title: tmdb ? (tmdb.original_title || tmdb.original_name) : title,
-
                                     overview: tmdb ? tmdb.overview : '',
-                                    poster_path: tmdb && tmdb.poster_path ? tmdb.poster_path : '/img/img_broken.svg',
-                                    backdrop_path: tmdb ? tmdb.backdrop_path : '',
-
+                                    poster_path: (tmdb && tmdb.poster_path) ? tmdb.poster_path : null,
+                                    backdrop_path: (tmdb && tmdb.backdrop_path) ? tmdb.backdrop_path : null,
                                     vote_average: tmdb ? tmdb.vote_average : 0,
                                     release_date: tmdb ? tmdb.release_date : '',
                                     first_air_date: tmdb ? tmdb.first_air_date : '',
-
-                                    media_type: tmdb && tmdb.media_type ? tmdb.media_type : 'movie',
-
+                                    media_type: cat.sheet.includes('фильмы') ? 'movie' : 'tv',
                                     source: 'tmdb'
-                                });
-                                index++;
-                                next();
+                                };
+                                pending--;
+                                if (pending === 0) {
+                                    callback({
+                                        title: cat.title,
+                                        url: cat.sheet,
+                                        results: results,
+                                        page: 1,
+                                        total_pages: 1,
+                                        total_results: results.length
+                                    });
+                                }
                             });
-                        }
-
-                        next();
+                        });
                     }, function () {
                         callback({ results: [] });
                     });
@@ -163,7 +144,6 @@
             function load(partLoaded, partEmpty) {
                 Lampa.Api.partNext(parts, 1, partLoaded, partEmpty);
             }
-
             load(onSuccess, onError);
             return load;
         };
@@ -183,41 +163,25 @@
         window.rutor_plugin = true;
 
         var api = new RutorApi();
-
         Lampa.Api.sources.rutor = api;
 
         Object.defineProperty(Lampa.Api.sources, SOURCE_NAME, {
-            get: function () {
-                return api;
-            }
+            get: function () { return api; }
         });
 
         Lampa.Params.values.source[SOURCE_NAME] = SOURCE_NAME;
 
         var menuItem = $('<li class="menu__item selector"><div class="menu__ico">' + ICON + '</div><div class="menu__text">' + SOURCE_NAME + '</div></li>');
-
         $('.menu .menu__list').eq(0).append(menuItem);
-
         menuItem.on('hover:enter', function () {
-            Lampa.Activity.push({
-                title: SOURCE_NAME,
-                component: 'category',
-                source: SOURCE_NAME,
-                page: 1
-            });
+            Lampa.Activity.push({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, page: 1 });
         });
 
         var origSet = Lampa.Storage.set;
-
         Lampa.Storage.set = function (key, value) {
             var res = origSet.apply(this, arguments);
             if (key === 'source' && value === SOURCE_NAME) {
-                Lampa.Activity.replace({
-                    title: SOURCE_NAME,
-                    component: 'category',
-                    source: SOURCE_NAME,
-                    page: 1
-                });
+                Lampa.Activity.replace({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, page: 1 });
             }
             return res;
         };
