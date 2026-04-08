@@ -6,7 +6,7 @@
 
     var SHEETS_API = 'https://script.google.com/macros/s/AKfycbzkG8EzY7yw2DFwK2tPcKfc5YS1opFKBRcjI6BX6SGmYOwB0NmFHDCkmRNy6kGbErAY/exec';
 
-    var MAX_ITEMS = 20;
+    var MAX_ITEMS = 15;
     var TMDB_CACHE_TIME = 60 * 60 * 24;
 
     var ICON = '<svg width="512" height="512" viewBox="0 0 512 512"><circle cx="256" cy="256" r="200" fill="currentColor"/></svg>';
@@ -19,6 +19,21 @@
         { title: 'Наши сериалы', sheet: 'Наши сериалы' },
         { title: 'Телевизор', sheet: 'Телевизор' }
     ];
+
+    var REQUEST_POOL = {};
+
+    function cleanTitle(title) {
+        if (!title) return '';
+
+        title = title.toString();
+
+        title = title.replace(/\(\d{4}\).*/, '');
+        title = title.replace(/\b(2160p|1080p|720p|HDR|BDRip|WEB-DL|BluRay|HEVC|H264|x264|x265)\b/gi, '');
+        title = title.replace(/[\[\]\|]/g, '');
+        title = title.replace(/\s+/g, ' ').trim();
+
+        return title;
+    }
 
     function getCacheKey(title) {
         return 'rutor_tmdb_' + Lampa.Utils.hash(title);
@@ -33,6 +48,22 @@
     }
 
     function searchTMDB(title, callback) {
+        if (!title) {
+            callback(null);
+            return;
+        }
+
+        // Проверка готовности TMDB источника
+        if (!Lampa.Api.sources.tmdb) {
+            console.warn('TMDB source not ready');
+            callback(null);
+            return;
+        }
+
+        if (REQUEST_POOL[title]) {
+            REQUEST_POOL[title].push(callback);
+            return;
+        }
 
         var cached = getFromCache(title);
         if (cached) {
@@ -40,24 +71,27 @@
             return;
         }
 
+        REQUEST_POOL[title] = [callback];
+
         Lampa.Api.sources.tmdb.search({
             query: title,
             page: 1
         }, function (data) {
-
-            if (!data || !data.results || !data.results.length) {
-                saveToCache(title, null);
-                callback(null);
-                return;
+            var result = null;
+            if (data && data.results && data.results.length) {
+                result = data.results[0];
             }
-
-            var result = data.results[0];
             saveToCache(title, result);
 
-            callback(result);
-
+            REQUEST_POOL[title].forEach(function (cb) {
+                cb(result);
+            });
+            delete REQUEST_POOL[title];
         }, function () {
-            callback(null);
+            REQUEST_POOL[title].forEach(function (cb) {
+                cb(null);
+            });
+            delete REQUEST_POOL[title];
         });
     }
 
@@ -66,16 +100,15 @@
         self.network = new Lampa.Reguest();
 
         self.category = function (params, onSuccess, onError) {
-
             var parts = [];
 
             RUTOR_CATEGORIES.forEach(function (cat) {
-
                 parts.push(function (callback) {
-
                     var url = SHEETS_API + '?sheet=' + encodeURIComponent(cat.sheet);
 
                     self.network.silent(url, function (json) {
+                        // Логирование ответа от API
+                        console.log('Response from', cat.sheet, json);
 
                         if (!json || !Array.isArray(json)) {
                             callback({ results: [] });
@@ -88,7 +121,6 @@
                         var index = 0;
 
                         function next() {
-
                             if (index >= json.length) {
                                 callback({
                                     title: cat.title,
@@ -102,35 +134,41 @@
                             }
 
                             var item = json[index];
-                            var title = item.title || item.name || item;
+                            var rawTitle = item.title || item.name || item;
+                            var title = cleanTitle(rawTitle);
 
                             searchTMDB(title, function (tmdb) {
-
                                 results.push({
-                                    id: tmdb ? tmdb.id : index + '_' + cat.sheet,
-                                    title: title,
-                                    name: title,
-                                    original_title: title,
-                                    overview: tmdb ? tmdb.overview : '',
-                                    poster_path: tmdb ? tmdb.poster_path : '',
-                                    backdrop_path: tmdb ? tmdb.backdrop_path : '',
-                                    vote_average: tmdb ? tmdb.vote_average : 0,
-                                    type: tmdb && tmdb.media_type ? tmdb.media_type : 'movie',
-                                    source: SOURCE_NAME
-                                });
+                                    id: tmdb && tmdb.id ? tmdb.id : index + '_' + cat.sheet,
 
+                                    title: tmdb ? (tmdb.title || tmdb.name) : title,
+                                    name: tmdb ? (tmdb.name || tmdb.title) : title,
+
+                                    original_title: tmdb ? (tmdb.original_title || tmdb.original_name) : title,
+
+                                    overview: tmdb ? tmdb.overview : '',
+                                    poster_path: tmdb && tmdb.poster_path ? tmdb.poster_path : '/img/img_broken.svg',
+                                    backdrop_path: tmdb ? tmdb.backdrop_path : '',
+
+                                    vote_average: tmdb ? tmdb.vote_average : 0,
+                                    release_date: tmdb ? tmdb.release_date : '',
+                                    first_air_date: tmdb ? tmdb.first_air_date : '',
+
+                                    // Определяем media_type по названию листа
+                                    media_type: cat.sheet.includes('фильмы') ? 'movie' : 'tv',
+
+                                    source: 'tmdb'
+                                });
                                 index++;
                                 next();
                             });
                         }
 
                         next();
-
                     }, function () {
                         callback({ results: [] });
                     });
                 });
-
             });
 
             function load(partLoaded, partEmpty) {
@@ -142,14 +180,16 @@
         };
 
         self.full = function (params, onSuccess, onError) {
+            params.source = 'tmdb';
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
 
         self.list = function (params, onSuccess) {
             onSuccess({ results: [] });
         };
-    }    function startPlugin() {
+    }
 
+    function startPlugin() {
         if (window.rutor_plugin) return;
         window.rutor_plugin = true;
 
@@ -178,13 +218,10 @@
             });
         });
 
-        // авто редирект если выбран источник
         var origSet = Lampa.Storage.set;
 
         Lampa.Storage.set = function (key, value) {
-
             var res = origSet.apply(this, arguments);
-
             if (key === 'source' && value === SOURCE_NAME) {
                 Lampa.Activity.replace({
                     title: SOURCE_NAME,
@@ -193,7 +230,6 @@
                     page: 1
                 });
             }
-
             return res;
         };
     }
@@ -205,5 +241,4 @@
             if (e.type === 'ready') startPlugin();
         });
     }
-
 })();
