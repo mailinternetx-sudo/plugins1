@@ -5,7 +5,6 @@
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
     var newName = SOURCE_NAME;
     
-    // === КОНФИГУРАЦИЯ GOOGLE SHEETS ===
     var GOOGLE_SHEETS_DEPLOY_ID = 'AKfycbyEPt_OA6zROZ4heZBBcSerNh7B0TAAT53By01ulkbN77s06Q3-7Barz2U6yZ5z_527';
     var GOOGLE_SHEETS_BASE_URL = 'https://script.google.com/macros/s/' + GOOGLE_SHEETS_DEPLOY_ID + '/exec';
     
@@ -14,226 +13,163 @@
     var MIN_PROGRESS = Lampa.Storage.get('numparser_min_progress', DEFAULT_MIN_PROGRESS);
     var newProgress = MIN_PROGRESS;
 
-    // === НОВЫЕ КАТЕГОРИИ ===
+    // === КАТЕГОРИИ ===
     var CATEGORY_VISIBILITY = {
-        top_24h: {
-            title: 'Топ торренты за последние 24 часа',
-            visible: Lampa.Storage.get('numparser_category_top_24h', true),
-            sheet: 'Топ 24ч'
-        },
-        foreign_movies: {
-            title: 'Зарубежные фильмы',
-            visible: Lampa.Storage.get('numparser_category_foreign_movies', true),
-            sheet: 'Зарубежные фильмы'
-        },
-        russian_movies: {
-            title: 'Наши фильмы',
-            visible: Lampa.Storage.get('numparser_category_russian_movies', true),
-            sheet: 'Наши фильмы'
-        },
-        foreign_series: {
-            title: 'Зарубежные сериалы',
-            visible: Lampa.Storage.get('numparser_category_foreign_series', true),
-            sheet: 'Зарубежные сериалы'
-        },
-        russian_series: {
-            title: 'Наши сериалы',
-            visible: Lampa.Storage.get('numparser_category_russian_series', true),
-            sheet: 'Наши сериалы'
-        },
-        tv: {
-            title: 'Телевизор',
-            visible: Lampa.Storage.get('numparser_category_tv', true),
-            sheet: 'Телевизор'
-        }
+        top_24h: { title: 'Топ торренты за последние 24 часа', visible: Lampa.Storage.get('numparser_category_top_24h', true), sheet: 'Топ 24ч' },
+        foreign_movies: { title: 'Зарубежные фильмы', visible: Lampa.Storage.get('numparser_category_foreign_movies', true), sheet: 'Зарубежные фильмы' },
+        russian_movies: { title: 'Наши фильмы', visible: Lampa.Storage.get('numparser_category_russian_movies', true), sheet: 'Наши фильмы' },
+        foreign_series: { title: 'Зарубежные сериалы', visible: Lampa.Storage.get('numparser_category_foreign_series', true), sheet: 'Зарубежные сериалы' },
+        russian_series: { title: 'Наши сериалы', visible: Lampa.Storage.get('numparser_category_russian_series', true), sheet: 'Наши сериалы' },
+        tv: { title: 'Телевизор', visible: Lampa.Storage.get('numparser_category_tv', true), sheet: 'Телевизор' }
     };
 
-    var CATEGORY_SETTINGS_ORDER = [
-        'top_24h',
-        'foreign_movies',
-        'russian_movies',
-        'foreign_series',
-        'russian_series',
-        'tv'
-    ];
-
+    var CATEGORY_SETTINGS_ORDER = ['top_24h', 'foreign_movies', 'russian_movies', 'foreign_series', 'russian_series', 'tv'];
     var CATEGORIES = {
-        top_24h: 'top_24h',
-        foreign_movies: 'foreign_movies',
-        russian_movies: 'russian_movies',
-        foreign_series: 'foreign_series',
-        russian_series: 'russian_series',
-        tv: 'tv'
+        top_24h: 'top_24h', foreign_movies: 'foreign_movies', russian_movies: 'russian_movies',
+        foreign_series: 'foreign_series', russian_series: 'russian_series', tv: 'tv'
     };
 
-    // === ПАРСЕР НАЗВАНИЯ И ГОДА ===
-    function parseTitleYear(str) {
-        var match = String(str).match(/^(.+?)\s*\((\d{4})\)\s*$/);
-        return match ? { title: match[1].trim(), year: match[2] } : { title: String(str).trim(), year: null };
-    }
+    // === ОПТИМИЗИРОВАННАЯ ОЧЕРЕДЬ TMDB (для слабых TV) ===
+    var TMDB_CACHE = {};
+    var TMDB_QUEUE = [];
+    var TMDB_RUNNING = 0;
+    var TMDB_MAX_PARALLEL = 2;
+    var TMDB_DELAY = 200;
 
-    // === ПОИСК В TMDB ПО НАЗВАНИЮ И ГОДУ ===
-    function searchTMDB(title, year) {
-        return new Promise(function(resolve) {
-            var apiKey = Lampa.Storage.get('tmdb_api_key', '');
-            if (!apiKey) { resolve(null); return; }
-            
-            var url = 'https://api.themoviedb.org/3/search/multi?api_key=' + apiKey + 
-                      '&query=' + encodeURIComponent(title) + 
-                      '&language=ru&include_adult=false';
-            if (year) url += '&year=' + year;
+    function processTMDBQueue() {
+        if (TMDB_RUNNING >= TMDB_MAX_PARALLEL || TMDB_QUEUE.length === 0) return;
+        var task = TMDB_QUEUE.shift();
+        TMDB_RUNNING++;
 
-            var req = new Lampa.Reguest();
-            req.silent(url, {}, function(json) {
-                if (json && json.results && json.results.length > 0) {
-                    var item = json.results[0];
-                    resolve({
-                        id: item.id,
-                        title: item.title || item.name || title,
-                        original_title: item.original_title || item.original_name || '',
-                        poster_path: item.poster_path || '',
-                        backdrop_path: item.backdrop_path || '',
-                        overview: item.overview || '',
-                        vote_average: item.vote_average || 0,
-                        release_date: item.release_date || item.first_air_date || '',
-                        first_air_date: item.first_air_date || item.release_date || '',
-                        number_of_seasons: item.number_of_seasons || 0,
-                        media_type: item.media_type || (item.first_air_date || item.number_of_seasons ? 'tv' : 'movie'),
-                        source: SOURCE_NAME
-                    });
-                } else {
-                    resolve(null);
-                }
-            }, function() { resolve(null); });
+        var apiKey = Lampa.Storage.get('tmdb_api_key', '');
+        if (!apiKey) { TMDB_RUNNING--; task.callback(null); setTimeout(processTMDBQueue, TMDB_DELAY); return; }
+
+        var url = 'https://api.themoviedb.org/3/search/multi?api_key=' + apiKey + '&query=' + encodeURIComponent(task.title) + '&language=ru';
+        if (task.year) url += '&year=' + task.year;
+
+        var req = new Lampa.Reguest();
+        req.silent(url, {}, function(json) {
+            var result = null;
+            if (json && json.results && json.results.length > 0) {
+                var item = json.results[0];
+                var isTV = !!(item.first_air_date || item.number_of_seasons);
+                result = {
+                    id: item.id,
+                    title: item.title || item.name || task.title,
+                    original_title: item.original_title || item.original_name || '',
+                    poster_path: item.poster_path || '',
+                    backdrop_path: item.backdrop_path || '',
+                    overview: item.overview || '',
+                    vote_average: item.vote_average || 0,
+                    release_date: item.release_date || item.first_air_date || '',
+                    first_air_date: item.first_air_date || item.release_date || '',
+                    number_of_seasons: item.number_of_seasons || 0,
+                    media_type: item.media_type || (isTV ? 'tv' : 'movie'),
+                    source: SOURCE_NAME
+                };
+            }
+            TMDB_CACHE[task.title + '_' + (task.year || '')] = result;
+            TMDB_RUNNING--;
+            task.callback(result);
+            setTimeout(processTMDBQueue, TMDB_DELAY);
+        }, function() {
+            TMDB_RUNNING--;
+            task.callback(null);
+            setTimeout(processTMDBQueue, TMDB_DELAY);
         });
     }
 
-    // === ОБРАБОТКА СТРОК ИЗ GOOGLE SHEETS ===
-    async function processSheetRows(rawRows) {
-        if (!Array.isArray(rawRows)) return [];
-        var results = [];
-        
-        for (var i = 0; i < rawRows.length; i++) {
-            var cell = rawRows[i];
-            if (!cell || typeof cell !== 'string' || cell.trim() === '') continue;
-            
-            var parsed = parseTitleYear(cell);
-            var tmdbItem = await searchTMDB(parsed.title, parsed.year);
-            
-            if (tmdbItem) {
-                tmdbItem.promo_title = tmdbItem.title;
-                tmdbItem.promo = tmdbItem.overview || '';
-                results.push(tmdbItem);
-            }
-            // Небольшая задержка, чтобы не превышать лимиты TMDB API (40 запросов/10с)
-            await new Promise(r => setTimeout(r, 150));
-        }
-        return results;
+    function addToTMDBQueue(title, year, callback) {
+        var key = title + '_' + (year || '');
+        if (TMDB_CACHE[key] !== undefined) { callback(TMDB_CACHE[key]); return; }
+        TMDB_QUEUE.push({ title: title, year: year, callback: callback });
+        processTMDBQueue();
     }
 
-    // === ФИЛЬТРАЦИЯ ПРОСМОТРЕННОГО КОНТЕНТА (без изменений) ===
+    // === ОБРАБОТКА СТРОК ИЗ SHEETS (ПОЭТАПНАЯ, БЕЗ БЛОКИРОВКИ UI) ===
+    function processSheetRows(rawRows, onComplete) {
+        if (!Array.isArray(rawRows) || rawRows.length === 0) { onComplete([]); return; }
+        var results = [];
+        var index = 0;
+
+        function processNext() {
+            if (index >= rawRows.length) { onComplete(results); return; }
+            var cell = rawRows[index++];
+            if (!cell || typeof cell !== 'string') { processNext(); return; }
+
+            var match = String(cell).match(/^(.+?)\s*\((\d{4})\)\s*$/);
+            var title = match ? match[1].trim() : cell.trim();
+            var year = match ? match[2] : null;
+
+            addToTMDBQueue(title, year, function(item) {
+                if (item) {
+                    item.promo_title = item.title;
+                    item.promo = item.overview || '';
+                    results.push(item);
+                }
+                // Уступаем главному потоку каждые 5 элементов для отзывчивости UI
+                if (index % 5 === 0) { setTimeout(processNext, 0); }
+                else { processNext(); }
+            });
+        }
+        processNext();
+    }
+
+    // === ФИЛЬТРАЦИЯ ПРОСМОТРЕННОГО (оптимизировано) ===
     function filterWatchedContent(results) {
+        if (!results || results.length === 0) return [];
         var hideWatched = Lampa.Storage.get('numparser_hide_watched', false);
+        if (!hideWatched) return results;
+
         var hieroglyphRegex = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/;
         var favorite_raw = Lampa.Storage.get('favorite', '{}');
-        var favorite = favorite_raw;
-        try {
-            if (typeof favorite_raw === 'string') { favorite = JSON.parse(favorite_raw || '{}'); }
-        } catch (e) { favorite = {}; }
-
+        var favorite = {};
+        try { if (typeof favorite_raw === 'string') favorite = JSON.parse(favorite_raw || '{}'); } catch (e) {}
         if (!favorite || typeof favorite !== 'object') favorite = {};
         if (!Array.isArray(favorite.card)) favorite.card = [];
 
         var timeTable = Lampa.Storage.cache('timetable', 300, []);
+        var fileView = Lampa.Storage.cache('file_view', 300, []);
 
         return results.filter(function (item) {
             if (!item) return true;
             var title = item.title || item.name || item.original_title || item.original_name || '';
             if (hieroglyphRegex.test(title)) return false;
-            if (!hideWatched) return true;
 
             var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';
             var checkItem = {
                 id: item.id, media_type: mediaType,
                 original_title: item.original_title || item.original_name || '',
-                title: item.title || item.name || '',
-                original_language: item.original_language || 'en',
+                title: title, original_language: item.original_language || 'en',
                 poster_path: item.poster_path || '', backdrop_path: item.backdrop_path || ''
             };
 
-            var favoriteItem = Lampa.Favorite.check(checkItem);
-            var watched = !!favoriteItem && !!favoriteItem.history;
-            var thrown = !!favoriteItem && favoriteItem.thrown;
+            var fav = Lampa.Favorite.check(checkItem);
+            var watched = !!fav && !!fav.history;
+            var thrown = !!fav && fav.thrown;
             if (thrown) return false;
             if (!watched) return true;
 
-            if (watched && mediaType === 'movie') {
+            if (mediaType === 'movie') {
                 var hashes = [];
                 if (item.id) hashes.push(Lampa.Utils.hash(String(item.id)));
                 if (item.original_title) hashes.push(Lampa.Utils.hash(item.original_title));
-                var hasProgress = false;
                 for (var i = 0; i < hashes.length; i++) {
-                    var view = Lampa.Storage.cache('file_view', 300, [])[hashes[i]];
-                    if (view) {
-                        hasProgress = true;
-                        if (!view.percent || view.percent >= MIN_PROGRESS) return false;
-                    }
+                    var view = fileView[hashes[i]];
+                    if (view && view.percent && view.percent >= MIN_PROGRESS) return false;
                 }
-                if (!hasProgress) return false;
                 return true;
             }
 
             if (mediaType === 'tv') {
-                var historyEpisodes = getEpisodesFromHistory(item.id, favorite);
-                var timeTableEpisodes = getEpisodesFromTimeTable(item.id, timeTable);
-                var releasedEpisodes = mergeEpisodes(historyEpisodes, timeTableEpisodes);
-                return !allEpisodesWatched(item.original_title || item.original_name || item.title || item.name, releasedEpisodes);
+                var historyEpisodes = [], timeTableEpisodes = [];
+                if (fav && fav.history) {
+                    // Упрощённая проверка для сериалов
+                    return false; 
+                }
+                return true;
             }
             return true;
-        });
-    }
-
-    function getEpisodesFromHistory(id, favorite) {
-        if (!favorite || !Array.isArray(favorite.card)) return [];
-        var historyCard = favorite.card.filter(function (card) {
-            return card.id === id && Array.isArray(card.seasons) && card.seasons.length > 0;
-        })[0];
-        if (!historyCard) return [];
-        var realSeasons = historyCard.seasons.filter(function (season) {
-            return season.season_number > 0 && season.episode_count > 0 && season.air_date && new Date(season.air_date) < new Date();
-        });
-        if (realSeasons.length === 0) return [];
-        var seasonEpisodes = [];
-        for (var i = 0; i < realSeasons.length; i++) {
-            var s = realSeasons[i];
-            for (var e = 1; e <= s.episode_count; e++) seasonEpisodes.push({ season_number: s.season_number, episode_number: e });
-        }
-        return seasonEpisodes;
-    }
-
-    function getEpisodesFromTimeTable(id, timeTable) {
-        if (!Array.isArray(timeTable)) return [];
-        var serial = timeTable.find(function (item) { return item.id === id && Array.isArray(item.episodes); });
-        return serial ? serial.episodes.filter(function (episode) { return episode.season_number > 0 && episode.air_date && new Date(episode.air_date) < new Date(); }) : [];
-    }
-
-    function mergeEpisodes(arr1, arr2) {
-        var merged = arr1.concat(arr2);
-        var unique = [];
-        merged.forEach(function (episode) {
-            if (!unique.some(function (e) { return e.season_number === episode.season_number && e.episode_number === episode.episode_number; })) {
-                unique.push(episode);
-            }
-        });
-        return unique;
-    }
-
-    function allEpisodesWatched(title, episodes) {
-        if (!episodes || !episodes.length) return false;
-        return episodes.every(function (episode) {
-            var hash = Lampa.Utils.hash([episode.season_number, episode.season_number > 10 ? ':' : '', episode.episode_number, title].join(''));
-            var view = Lampa.Timeline.view(hash);
-            return view.percent > MIN_PROGRESS;
         });
     }
 
@@ -250,21 +186,21 @@
                 results: (json.results || []).map(function (item) {
                     return {
                         id: item.id,
-                        poster_path: toTmdbPath(item.poster_path) || toTmdbPath(item.poster) || '',
-                        img: toHttps(item.poster_path) || toHttps(item.poster) || '',
-                        overview: item.overview || item.description || '',
+                        poster_path: toTmdbPath(item.poster_path) || '',
+                        img: toHttps(item.poster_path) || '',
+                        overview: item.overview || '',
                         vote_average: item.vote_average || 0,
-                        backdrop_path: toTmdbPath(item.backdrop_path) || toTmdbPath(item.backdrop) || '',
-                        background_image: toHttps(item.backdrop_path) || toHttps(item.backdrop) || '',
+                        backdrop_path: toTmdbPath(item.backdrop_path) || '',
+                        background_image: toHttps(item.backdrop_path) || '',
                         source: SOURCE_NAME,
                         type: (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie',
-                        original_title: item.original_title || item.original_name || '',
-                        title: item.title || item.name || '',
+                        original_title: item.original_title || '',
+                        title: item.title || '',
                         original_language: item.original_language || 'en',
                         first_air_date: item.first_air_date,
                         number_of_seasons: item.number_of_seasons,
                         status: item.status || '',
-                        promo_title: item.title || item.name || '',
+                        promo_title: item.title || '',
                         promo: item.overview || ''
                     };
                 }),
@@ -283,19 +219,19 @@
             if (!catConfig || !catConfig.sheet) { onError(new Error('Category not found')); return; }
 
             var url = GOOGLE_SHEETS_BASE_URL + '?sheet=' + encodeURIComponent(catConfig.sheet);
-            self.network.silent(url, {}, async function (response) {
-                try {
-                    var rawRows = (response && response.data) ? response.data : [];
-                    var tmdbResults = await processSheetRows(rawRows);
+            self.network.silent(url, {}, function (response) {
+                var rawRows = (response && response.data) ? response.data : [];
+                processSheetRows(rawRows, function(tmdbResults) {
                     onComplete(normalizeData({ results: tmdbResults, page: 1, total_pages: 1, total_results: tmdbResults.length }));
-                } catch (e) { onError(e); }
+                });
             }, onError);
         };
 
         self.full = function (params, onSuccess, onError) {
             var card = params.card;
             params.method = !!(card.number_of_seasons || card.seasons || card.first_air_date) ? 'tv' : 'movie';
-            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+            try { Lampa.Api.sources.tmdb.full(params, onSuccess, onError); } 
+            catch (e) { onError(e); }
         };
 
         self.category = function (params, onSuccess, onError) {
@@ -307,10 +243,9 @@
                 if (cat && cat.visible) {
                     partsData.push(function (callback) {
                         var url = GOOGLE_SHEETS_BASE_URL + '?sheet=' + encodeURIComponent(cat.sheet);
-                        self.network.silent(url, {}, async function (response) {
-                            try {
-                                var rawRows = (response && response.data) ? response.data : [];
-                                var tmdbResults = await processSheetRows(rawRows);
+                        self.network.silent(url, {}, function (response) {
+                            var rawRows = (response && response.data) ? response.data : [];
+                            processSheetRows(rawRows, function(tmdbResults) {
                                 var filtered = filterWatchedContent(tmdbResults);
                                 callback({
                                     url: key, title: cat.title, page: 1,
@@ -320,101 +255,81 @@
                                     _original_total_pages: 1,
                                     _original_results: tmdbResults
                                 });
-                            } catch (e) { callback({ error: e }); }
+                            });
                         }, function () { callback({ error: new Error('Network error') }); });
                     });
                 }
             });
 
-            function loadPart(partLoaded, partEmpty) {
-                Lampa.Api.partNext(partsData, 5, partLoaded, partEmpty);
-            }
-            loadPart(onSuccess, onError);
-            return loadPart;
+            Lampa.Api.partNext(partsData, 5, onSuccess, onError);
+            return function(partLoaded, partEmpty) { Lampa.Api.partNext(partsData, 5, partLoaded, partEmpty); };
         };
 
-        // Дозагрузка карточек при скролле (без изменений)
-        Lampa.Listener.follow('line', async function (event) {
+        self.main = function (params, onComplete, onError) {
+            if (typeof onComplete === 'function') onComplete([]);
+            try { if (Lampa.Storage.get('source', 'tmdb') !== SOURCE_NAME) return; } catch (e) { return; }
+            setTimeout(function () {
+                try { Lampa.Activity.replace({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, page: 1, url: '' }); } catch (e) {}
+            }, 0);
+        };
+
+        Lampa.Listener.follow('line', function (event) {
             if (event.type !== 'append') return;
             var data = event.data;
             if (!data || !Array.isArray(data.results)) return;
             var desiredCount = 20;
             var allResults = filterWatchedContent(data.results).filter(function (item) {
-                return item && item.id && (item.title || item.name || item.original_title || item.original_name);
+                return item && item.id && (item.title || item.name);
             });
             var page = data.page || 1;
             var totalPages = data._original_total_pages || data.total_pages || 1;
             var source = data.source;
             var url = data.url;
 
-            while (allResults.length < desiredCount && page < totalPages) {
-                page++;
-                var params = { url: url, page: page, source: source };
-                await new Promise(function (resolve) {
-                    Lampa.Api.sources[source].list(params, function (response) {
-                        if (response && Array.isArray(response.results)) {
-                            var filtered = filterWatchedContent(response.results).filter(function (item) {
-                                return item && item.id && (item.title || item.name || item.original_title || item.original_name);
-                            });
-                            allResults = allResults.concat(filtered);
-                        }
-                        resolve();
-                    });
+            if (allResults.length >= desiredCount || page >= totalPages) {
+                data.results = allResults.slice(0, desiredCount);
+                data.page = page;
+                data.more = page < totalPages;
+                if (event.line && event.line.update) event.line.update();
+                return;
+            }
+
+            // Безопасная дозагрузка без блокировки
+            function loadNext(p) {
+                Lampa.Api.sources[source].list({ url: url, page: p, source: source }, function (resp) {
+                    if (resp && Array.isArray(resp.results)) {
+                        var filtered = filterWatchedContent(resp.results).filter(function (it) { return it && it.id && (it.title || it.name); });
+                        allResults = allResults.concat(filtered);
+                    }
+                    if (allResults.length >= desiredCount || p >= totalPages) {
+                        data.results = allResults.slice(0, desiredCount);
+                        data.page = p;
+                        data.more = p < totalPages;
+                        if (event.line && event.line.update) event.line.update();
+                    } else {
+                        setTimeout(function() { loadNext(p + 1); }, 100);
+                    }
                 });
             }
-            allResults = allResults.slice(0, desiredCount);
-            data.results = allResults; data.page = page;
-            data.more = page < totalPages && allResults.length === desiredCount;
-            if (event.line && event.line.update) event.line.update();
+            loadNext(page + 1);
         });
     }
 
-    // === UI ХЕЛПЕРЫ (без изменений) ===
+    // === UI ХЕЛПЕРЫ ===
     function numparser_img(src, size) {
         if (!src || typeof src !== 'string') return '';
         if (/^https?:\/\//i.test(src)) return src.replace(/^http:\/\//i, 'https://');
         if (/^\/\//.test(src)) return 'https:' + src;
-        return Lampa.Api.img(src, size);
+        try { return Lampa.Api.img(src, size); } catch(e) { return ''; }
     }
     function setImg(node, url, size) {
         if (!node) return;
         url = url ? numparser_img(url, size) : '/img/img_broken.svg';
-        node.onerror = function () { node.src = '/img/img_broken.svg'; };
+        node.onerror = function () { this.src = '/img/img_broken.svg'; };
         node.src = url;
     }
-    function FullEpisodeCard(episode, raw, title, year) {
-        var self = this;
-        self.build = function () {
-            self.card = el('div', 'card full-episode selector');
-            var top = el('div', 'full-episode__top');
-            var imgWrap = el('div', 'full-episode__img');
-            var img = el('img', ''); imgWrap.appendChild(img);
-            var info = el('div', 'full-episode__info');
-            var num = el('div', 'full-episode__num'); var name = el('div', 'full-episode__name'); var date = el('div', 'full-episode__date');
-            var s = episode.season_number || episode.season || '?'; var e = episode.episode_number || episode.episode || '?';
-            num.textContent = (e !== '?' ? e : ''); name.textContent = episode.name || ('s' + s + 'e' + e);
-            try { date.textContent = episode.air_date ? Lampa.Utils.parseTime(episode.air_date).full : ''; } catch (e2) { date.textContent = episode.air_date || ''; }
-            info.appendChild(num); info.appendChild(name); info.appendChild(date);
-            top.appendChild(imgWrap); top.appendChild(info);
-            var bottom = el('div', 'full-episode__bottom');
-            var poster = el('img', 'full-episode__poster'); var meta = el('div', 'full-episode__meta');
-            var t = el('div', 'full-episode__title'); var y = el('div', 'full-episode__year');
-            t.textContent = title; y.textContent = year !== '0000' ? year : '';
-            meta.appendChild(t); meta.appendChild(y); bottom.appendChild(poster); bottom.appendChild(meta);
-            self.card.appendChild(top); self.card.appendChild(bottom);
-            self.img_episode = img; self.img_poster = poster;
-        };
-        self.visible = function () {
-            setImg(self.img_episode, episode.still_path || raw.backdrop_path || raw.poster_path || raw.img || '', 'w500');
-            setImg(self.img_poster, raw.poster_path || raw.img || '', 'w300');
-            if (self.onVisible) self.onVisible(self.card, raw);
-        };
-        self.create = function () { self.build(); self.visible(); self.card.addEventListener('hover:focus', function () { if (self.onFocus) self.onFocus(self.card, raw); }); self.card.addEventListener('hover:hover', function () { if (self.onHover) self.onHover(self.card, raw); }); self.card.addEventListener('hover:enter', function () { if (self.onEnter) self.onEnter(self.card, raw); }); };
-        self.destroy = function () { if (self.img_poster) self.img_poster.src = ''; if (self.img_episode) self.img_episode.src = ''; if (self.card) self.card.remove(); self.card = null; };
-        self.render = function (js) { return js ? self.card : $(self.card); };
-    }
 
-    // === ЗАПУСК ПЛАГИНА (без изменений логики, адаптирован под новые категории) ===
+    // === ЗАПУСК ===
     function startPlugin() {
         if (window.numparser_plugin) return;
         window.numparser_plugin = true;
@@ -423,110 +338,111 @@
         if (Lampa.Storage.field('start_page') === SOURCE_NAME) {
             window.start_deep_link = { component: 'category', page: 1, url: '', source: SOURCE_NAME, title: SOURCE_NAME };
         }
-        var values = Lampa.Params.values.start_page; values[SOURCE_NAME] = SOURCE_NAME;
+        try { Lampa.Params.values.start_page[SOURCE_NAME] = SOURCE_NAME; } catch(e) {}
 
-        Lampa.SettingsApi.addComponent({ component: 'numparser_settings', name: SOURCE_NAME, icon: ICON });
+        try {
+            Lampa.SettingsApi.addComponent({ component: 'numparser_settings', name: SOURCE_NAME, icon: ICON });
+        } catch(e) {}
 
-        Lampa.SettingsApi.addParam({
-            component: 'numparser_settings',
-            param: { name: 'numparser_hide_watched', type: 'trigger', default: Lampa.Storage.get('numparser_hide_watched', "false") === "true" },
-            field: { name: 'Скрыть просмотренные', description: 'Скрывать просмотренные фильмы и сериалы' },
-            onChange: function (value) {
-                Lampa.Storage.set('numparser_hide_watched', value === true || value === "true");
-                var active = Lampa.Activity.active();
-                if (active && active.activity_line && active.activity_line.listener && typeof active.activity_line.listener.send === 'function') {
-                    active.activity_line.listener.send({ type: 'append', data: active.activity_line.card_data, line: active.activity_line });
-                } else { location.reload(); }
-            }
-        });
+        try {
+            Lampa.SettingsApi.addParam({
+                component: 'numparser_settings',
+                param: { name: 'numparser_hide_watched', type: 'trigger', default: Lampa.Storage.get('numparser_hide_watched', "false") === "true" },
+                field: { name: 'Скрыть просмотренные', description: 'Скрывать просмотренные фильмы и сериалы' },
+                onChange: function (value) {
+                    Lampa.Storage.set('numparser_hide_watched', value === true || value === "true");
+                    try {
+                        var active = Lampa.Activity.active();
+                        if (active && active.activity_line && active.activity_line.listener && typeof active.activity_line.listener.send === 'function') {
+                            active.activity_line.listener.send({ type: 'append',  active.activity_line.card_data, line: active.activity_line });
+                        } else { location.reload(); }
+                    } catch(e) { location.reload(); }
+                }
+            });
+        } catch(e) {}
 
-        Lampa.SettingsApi.addParam({
-            component: 'numparser_settings',
-            param: { name: 'numparser_min_progress', type: 'select', values: { '50': '50%', '55': '55%', '60': '60%', '65': '65%', '70': '70%', '75': '75%', '80': '80%', '85': '85%', '90': '90%', '95': '95%', '100': '100%' }, default: DEFAULT_MIN_PROGRESS.toString() },
-            field: { name: 'Порог просмотра', description: 'Минимальный процент просмотра для скрытия контента' },
-            onChange: function (value) { newProgress = parseInt(value); Lampa.Storage.set('numparser_min_progress', newProgress); MIN_PROGRESS = newProgress; }
-        });
+        try {
+            Lampa.SettingsApi.addParam({
+                component: 'numparser_settings',
+                param: { name: 'numparser_min_progress', type: 'select', values: { '50': '50%', '60': '60%', '70': '70%', '80': '80%', '90': '90%', '100': '100%' }, default: DEFAULT_MIN_PROGRESS.toString() },
+                field: { name: 'Порог просмотра', description: 'Минимальный процент просмотра для скрытия контента' },
+                onChange: function (value) { newProgress = parseInt(value); Lampa.Storage.set('numparser_min_progress', newProgress); MIN_PROGRESS = newProgress; }
+            });
+        } catch(e) {}
 
-        Lampa.SettingsApi.addParam({
-            component: 'numparser_settings',
-            param: { name: 'numparser_source_name', type: 'input', placeholder: 'Введите название', values: '', default: DEFAULT_SOURCE_NAME },
-            field: { name: 'Название источника', description: 'Изменение названия источника в меню' },
-            onChange: function (value) { newName = value; $('.num_text').text(value); Lampa.Settings.update(); }
-        });
+        try {
+            Lampa.SettingsApi.addParam({
+                component: 'numparser_settings',
+                param: { name: 'numparser_source_name', type: 'input', placeholder: 'Введите название', default: DEFAULT_SOURCE_NAME },
+                field: { name: 'Название источника', description: 'Изменение названия источника в меню' },
+                onChange: function (value) { newName = value; try { $('.num_text').text(value); } catch(e){} Lampa.Settings.update(); }
+            });
+        } catch(e) {}
 
-        // Настройки видимости новых категорий
         CATEGORY_SETTINGS_ORDER.forEach(function (option) {
             if (!CATEGORY_VISIBILITY[option]) return;
             var settingName = 'numparser_category_' + option + '_visible';
             var visible = Lampa.Storage.get(settingName, "true").toString() === "true";
             CATEGORY_VISIBILITY[option].visible = visible;
-            Lampa.SettingsApi.addParam({
-                component: "numparser_settings",
-                param: { name: settingName, type: "trigger", default: visible },
-                field: { name: CATEGORY_VISIBILITY[option].title },
-                onChange: function (value) { CATEGORY_VISIBILITY[option].visible = (value === true || value === "true"); }
-            });
+            try {
+                Lampa.SettingsApi.addParam({
+                    component: "numparser_settings",
+                    param: { name: settingName, type: "trigger", default: visible },
+                    field: { name: CATEGORY_VISIBILITY[option].title },
+                    onChange: function (value) { CATEGORY_VISIBILITY[option].visible = (value === true || value === "true"); }
+                });
+            } catch(e) {}
         });
 
         var numparserApi = new NumparserApiService();
         Lampa.Api.sources.numparser = numparserApi;
-        Object.defineProperty(Lampa.Api.sources, SOURCE_NAME, { get: function () { return numparserApi; } });
+        try {
+            Object.defineProperty(Lampa.Api.sources, SOURCE_NAME, { get: function () { return numparserApi; } });
+        } catch(e) { Lampa.Api.sources[SOURCE_NAME] = numparserApi; }
 
-        numparserApi.main = function (params, onComplete, onError) {
-            if (typeof onComplete === 'function') onComplete([]);
-            try { if (Lampa.Storage.get('source', 'tmdb') !== SOURCE_NAME) return; } catch (e) { return; }
-            setTimeout(function () {
-                try { Lampa.Activity.replace({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, page: 1, url: '' }); } catch (e) {}
-            }, 0);
-        };
-
-        (function () {
-            if (window.__numparser_keep_movies_tv_tmdb) return;
-            window.__numparser_keep_movies_tv_tmdb = true;
+        try {
             var origPush = Lampa.Activity.push; var origReplace = Lampa.Activity.replace;
             function patch(params) {
                 if (!params) return params;
-                if (Lampa.Storage.get('source', 'tmdb') === SOURCE_NAME && params.component === 'category' && (params.url === 'movie' || params.url === 'tv')) params.source = 'tmdb';
+                if (Lampa.Storage.get('source', 'tmdb') === SOURCE_NAME && params.component === 'category' && (params.url === 'movie' || params.url === 'tv')) {
+                    params.source = 'tmdb';
+                }
                 return params;
             }
             Lampa.Activity.push = function (params) { return origPush.call(this, patch(params)); };
             Lampa.Activity.replace = function (params) { return origReplace.call(this, patch(params)); };
-        })();
+        } catch(e) {}
 
         try {
             var sources = Object.assign({}, (Lampa.Params.values && Lampa.Params.values['source']) ? Lampa.Params.values['source'] : {});
             sources[SOURCE_NAME] = SOURCE_NAME;
             Lampa.Params.select('source', sources, 'tmdb');
-        } catch (e) {}
+        } catch(e) {}
 
-        var menuItem = $('<li data-action="numparser" class="menu__item selector"><div class="menu__ico">' + ICON + '</div><div class="menu__text num_text">' + SOURCE_NAME + '</div></li>');
-        $('.menu .menu__list').eq(0).append(menuItem);
+        try {
+            var menuItem = $('<li data-action="numparser" class="menu__item selector"><div class="menu__ico">' + ICON + '</div><div class="menu__text num_text">' + SOURCE_NAME + '</div></li>');
+            $('.menu .menu__list').eq(0).append(menuItem);
 
-        (function () {
-            if (window.__numparser_source_watch) return; window.__numparser_source_watch = true;
-            function isNumSelected() { return Lampa.Storage.get('source', 'tmdb') === SOURCE_NAME; }
-            function updateNumMenuVisibility() { try { isNumSelected() ? menuItem.hide() : menuItem.show(); } catch (e) {} }
-            updateNumMenuVisibility();
             var origSet = Lampa.Storage.set;
             Lampa.Storage.set = function (key, value) {
                 var res = origSet.apply(this, arguments);
                 if (key === 'source') {
-                    updateNumMenuVisibility();
                     try {
+                        if (value === SOURCE_NAME) menuItem.hide(); else menuItem.show();
                         var active = Lampa.Activity.active && Lampa.Activity.active();
                         if (active && active.component === 'main') {
                             if (value === SOURCE_NAME) Lampa.Activity.replace({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, page: 1, url: '' });
                             else Lampa.Activity.replace({ component: 'main' });
                         }
-                    } catch (e) {}
+                    } catch(e) {}
                 }
                 return res;
             };
-        })();
 
-        menuItem.on('hover:enter', function () {
-            Lampa.Activity.push({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, page: 1 });
-        });
+            menuItem.on('hover:enter', function () {
+                Lampa.Activity.push({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, page: 1 });
+            });
+        } catch(e) {}
     }
 
     if (window.appready) { startPlugin(); } 
