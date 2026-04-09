@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var DEFAULT_SOURCE_NAME = 'RUTOR1';
+    var DEFAULT_SOURCE_NAME = 'NUMParser';
     var SOURCE_NAME = Lampa.Storage.get('numparser_source_name', DEFAULT_SOURCE_NAME);
     var BASE_URL = 'https://script.google.com/macros/s/AKfycbzuSvL74d-B3pDYIa4dnfwDgazr5QOOxhIUbxDd3m_RMx9geJTLcmHQgRNZCrqW0YRb/exec';
 
