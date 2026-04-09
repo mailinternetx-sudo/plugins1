@@ -3,7 +3,7 @@
 
     var DEFAULT_SOURCE_NAME = 'RUTOR';
     var SOURCE_NAME = DEFAULT_SOURCE_NAME;
-    var SHEETS_API = 'https://script.google.com/macros/s/AKfycbzkG8EzY7yw2DFwK2tPcKfc5YS1opFKBRcjI6BX6SGmYOwB0NmFHDCkmRNy6kGbErAY/exec';
+    var SHEETS_API = 'https://script.google.com/macros/s/AKfycbyYt99szrMUM3HL62kMV1mWOSJs8Hd2criTzp4GhULSKe6V1RJnKT2KMvcO6Kt6NSI/exec';
     var MAX_ITEMS = 12;           // было 15
     var TMDB_CACHE_TIME = 60 * 60 * 24 * 3; // 3 дня
     var MAX_CONCURRENT = 6;       // ограничение параллельных запросов
