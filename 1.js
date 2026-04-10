@@ -1,12 +1,12 @@
 (function () {
     'use strict';
 
-    var SOURCE_NAME = 'NUMParser GS';
+    var SOURCE_NAME = 'NUMParser TMDB';
     var GS_URL = 'https://script.google.com/macros/s/AKfycbyjSGRPjqyn3FgfmnMI9H9Y9X8fuDkDqj7nBSvdip6d6Orwe9fqIS_3OcVNB9UMiHBm/exec';
 
     var LIMIT = 20;
-    var TMDB_CACHE_TIME = 60 * 60 * 24; // 24h
-    var SHEET_CACHE_TIME = 300; // 5 min
+    var TMDB_CACHE_TIME = 60 * 60 * 24;
+    var SHEET_CACHE_TIME = 300;
 
     var CATEGORIES = [
         {title: 'Топ торренты за последние 24 часа', sheet: 'Топ 24ч'},
@@ -21,44 +21,45 @@
 
         var network = new Lampa.Reguest();
 
+        // 🔹 читаем только TMDB ID
         function parse(json) {
             var rows = json.data || json;
             if (!Array.isArray(rows)) return [];
 
             return rows.slice(1).map(function (row) {
-                return {
-                    id: parseInt(row[5]),
-                    title: row[7],
-                    poster: row[8]
-                };
-            }).filter(function (i) {
-                return i.id;
+                return parseInt(row[5]); // только колонка F
+            }).filter(function (id) {
+                return id;
             });
         }
 
         function getSheet(sheet, callback) {
 
-            var cache = Lampa.Storage.cache('gs_sheet_' + sheet, SHEET_CACHE_TIME, null);
+            var cache = Lampa.Storage.cache('gs_ids_' + sheet, SHEET_CACHE_TIME, null);
             if (cache) return callback(cache);
 
             network.silent(GS_URL + '?sheet=' + encodeURIComponent(sheet), function (json) {
-                var data = parse(json);
-                Lampa.Storage.cache('gs_sheet_' + sheet, SHEET_CACHE_TIME, data);
-                callback(data);
+                var ids = parse(json);
+                Lampa.Storage.cache('gs_ids_' + sheet, SHEET_CACHE_TIME, ids);
+                callback(ids);
             }, function () {
                 callback([]);
             });
         }
 
+        // 🔥 получаем ПОЛНОСТЬЮ TMDB карточку
         function getTMDB(id, callback) {
 
-            var cache = Lampa.Storage.cache('tmdb_' + id, TMDB_CACHE_TIME, null);
+            var cache = Lampa.Storage.cache('tmdb_full_' + id, TMDB_CACHE_TIME, null);
             if (cache) return callback(cache);
 
-            function tryMovie() {
-                Lampa.Api.sources.tmdb.full({
-                    card: {id: id, type: 'movie'}
-                }, success, tryTV);
+            function success(data) {
+                if (!data) return callback(null);
+
+                var card = data.movie || data.tv || data;
+
+                Lampa.Storage.cache('tmdb_full_' + id, TMDB_CACHE_TIME, card);
+                callback(card);
             }
 
             function tryTV() {
@@ -69,47 +70,34 @@
                 });
             }
 
-            function success(data) {
-                if (!data) return callback(null);
-
-                Lampa.Storage.cache('tmdb_' + id, TMDB_CACHE_TIME, data);
-                callback(data);
-            }
-
-            tryMovie();
+            Lampa.Api.sources.tmdb.full({
+                card: {id: id, type: 'movie'}
+            }, success, tryTV);
         }
 
+        // ⚡ preload пачками
         function preload(ids, done) {
 
             var results = [];
-            var i = 0;
+            var index = 0;
             var batch = 5;
 
             function next() {
 
-                var chunk = ids.slice(i, i + batch);
+                var chunk = ids.slice(index, index + batch);
                 if (!chunk.length) return done(results);
 
                 var loaded = 0;
 
-                chunk.forEach(function (item) {
+                chunk.forEach(function (id) {
 
-                    getTMDB(item.id, function (data) {
+                    getTMDB(id, function (card) {
 
-                        if (data) {
-                            var card = data.movie || data.tv || data;
-
-                            if (item.poster) {
-                                card.poster_path = item.poster;
-                            }
-
-                            results.push(card);
-                        }
+                        if (card) results.push(card);
 
                         loaded++;
-
                         if (loaded === chunk.length) {
-                            i += batch;
+                            index += batch;
                             next();
                         }
                     });
@@ -120,12 +108,11 @@
             next();
         }
 
+        // 🎬 сортировка
         function sortNetflix(items) {
             return items.sort(function (a, b) {
-
                 var scoreA = (a.vote_average || 0) * 10 + (a.popularity || 0);
                 var scoreB = (b.vote_average || 0) * 10 + (b.popularity || 0);
-
                 return scoreB - scoreA;
             });
         }
@@ -148,13 +135,13 @@
             var sheet = params.url;
             var page = params.page || 1;
 
-            getSheet(sheet, function (items) {
+            getSheet(sheet, function (ids) {
 
-                preload(items, function (fullData) {
+                preload(ids, function (cards) {
 
-                    fullData = sortNetflix(fullData);
+                    cards = sortNetflix(cards);
 
-                    onSuccess(build(fullData, page));
+                    onSuccess(build(cards, page));
                 });
 
             });
@@ -168,20 +155,20 @@
 
                 parts.push(function (done) {
 
-                    getSheet(cat.sheet, function (items) {
+                    getSheet(cat.sheet, function (ids) {
 
-                        preload(items.slice(0, 20), function (data) {
+                        preload(ids.slice(0, 20), function (cards) {
 
-                            data = sortNetflix(data);
+                            cards = sortNetflix(cards);
 
                             done({
                                 title: cat.title,
                                 url: cat.sheet,
-                                results: data,
-                                total_results: items.length,
-                                total_pages: Math.ceil(items.length / LIMIT),
+                                results: cards,
+                                total_results: ids.length,
+                                total_pages: Math.ceil(ids.length / LIMIT),
                                 page: 1,
-                                more: items.length > LIMIT,
+                                more: ids.length > LIMIT,
                                 source: SOURCE_NAME
                             });
 
@@ -209,7 +196,6 @@
             if (!data.url) return;
 
             var next = data.page + 1;
-
             if (next > data.total_pages) return;
 
             Lampa.Api.sources[SOURCE_NAME].list({
@@ -228,8 +214,8 @@
 
     function startPlugin() {
 
-        if (window.gs_v3) return;
-        window.gs_v3 = true;
+        if (window.gs_tmdb_only) return;
+        window.gs_tmdb_only = true;
 
         var service = new GSService();
 
