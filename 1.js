@@ -3,7 +3,7 @@
 
     var SOURCE_NAME = 'V10 v1';
     var API_KEY = 'f348b4586d1791a40d99edd92164cb86';
-    var SCRIPT_ID = 'AKfycbyjSGRPjqyn3FgfmnMI9H9Y9X8fuDkDqj7nBSvdip6d6Orwe9fqIS_3OcVNB9UMiHBm';
+    var SCRIPT_ID = 'AKfycbwJVQiEp-kufhOHcDZ9HkT6zGb-yFJ_A3S44P3XPw5Ywl-AcRvZONyGYDO7S3gmnkm6';
 
     var SHEETS = {
         top: 'Топ 24ч',
