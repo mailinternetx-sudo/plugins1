@@ -10,11 +10,18 @@
     var MIN_PROGRESS = Lampa.Storage.get('numparser_min_progress', DEFAULT_MIN_PROGRESS);
     var newProgress = MIN_PROGRESS;
 
-    // ========== НОВЫЕ НАСТРОЙКИ ==========
+    // ========== НАСТРОЙКИ ==========
     var GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbyjSGRPjqyn3FgfmnMI9H9Y9X8fuDkDqj7nBSvdip6d6Orwe9fqIS_3OcVNB9UMiHBm/exec';
     var TMDB_BASE_URL = 'https://api.themoviedb.org/3';
     
-    // Конфигурация новых категорий
+    // Ключ API TMDB (приоритет: настройка плагина → глобальная настройка Lampa)
+    function getTMDBKey() {
+        var pluginKey = Lampa.Storage.get('numparser_tmdb_key', '').trim();
+        if (pluginKey) return pluginKey;
+        return Lampa.Storage.get('tmdb_key', '');
+    }
+    
+    // Конфигурация категорий
     var CATEGORIES_CONFIG = {
         'top24': {
             title: 'Топ торренты за последние 24 часа',
@@ -163,23 +170,47 @@
     // ========== ЗАПРОСЫ К TMDB ==========
     function fetchTMDBData(id, mediaType, callback) {
         if (tmdbCache[id]) { callback(tmdbCache[id]); return; }
-        var tmdbKey = Lampa.Storage.get('tmdb_key', '');
+        
+        var tmdbKey = getTMDBKey();
+        if (!tmdbKey) {
+            console.warn('[NUMParser] TMDB API key not set!');
+            callback(null);
+            return;
+        }
+        
         var lang = Lampa.Storage.get('tmdb_lang', 'ru');
-        var url = TMDB_BASE_URL + '/' + mediaType + '/' + id + '?api_key=' + tmdbKey + '&language=' + lang;
+        var url = TMDB_BASE_URL + '/' + mediaType + '/' + id + '?api_key=' + encodeURIComponent(tmdbKey) + '&language=' + lang;
+        
         var request = new Lampa.Reguest();
         request.silent(url, function(json) {
-            if (json && json.id) { tmdbCache[id] = json; callback(json); }
-            else callback(null);
-        }, function() { callback(null); });
+            if (json && json.id) { 
+                tmdbCache[id] = json; 
+                callback(json); 
+            } else {
+                callback(null);
+            }
+        }, function(err) { 
+            console.warn('[NUMParser] TMDB request error:', err);
+            callback(null); 
+        });
     }
 
     function fetchTMDBDataBatch(ids, mediaType, onComplete) {
         var results = [], completed = 0, total = ids.length;
         if (total === 0) { onComplete([]); return; }
+        
         ids.forEach(function(id) {
             fetchTMDBData(id, mediaType, function(data) {
                 if (data) results.push(data);
-                if (++completed === total) onComplete(results);
+                if (++completed === total) {
+                    // Сортируем результаты в том же порядке, что и входные ID
+                    var ordered = [];
+                    ids.forEach(function(tid) {
+                        var found = results.find(function(r) { return r.id === tid; });
+                        if (found) ordered.push(found);
+                    });
+                    onComplete(ordered);
+                }
             });
         });
     }
@@ -188,8 +219,10 @@
     function fetchSheetIDs(sheetName, callback) {
         var cacheKey = sheetName;
         if (sheetsCache[cacheKey] && sheetsCache[cacheKey].timestamp > Date.now() - 300000) {
-            callback(sheetsCache[cacheKey].data); return;
+            callback(sheetsCache[cacheKey].data); 
+            return;
         }
+        
         var url = GOOGLE_SHEETS_URL + '?sheet=' + encodeURIComponent(sheetName);
         var request = new Lampa.Reguest();
         request.silent(url, function(json) {
@@ -198,14 +231,17 @@
                 // Column F = index 5, start from row 2 = index 1
                 for (var i = 1; i < json.data.length; i++) {
                     var row = json.data[i];
-                    if (row && row[5] && !isNaN(parseInt(row[5]))) {
+                    if (row && row[5] !== undefined && row[5] !== '' && !isNaN(parseInt(row[5]))) {
                         ids.push(parseInt(row[5]));
                     }
                 }
                 sheetsCache[cacheKey] = { data: ids, timestamp: Date.now() };
                 callback(ids);
             } else callback([]);
-        }, function() { callback([]); });
+        }, function(err) { 
+            console.warn('[NUMParser] Google Sheets request error:', err);
+            callback([]); 
+        });
     }
 
     // ========== ОСНОВНОЙ СЕРВИС ==========
@@ -285,7 +321,16 @@
             var page = params.page || 1;
             var config = CATEGORIES_CONFIG[categoryKey];
             
-            if (!config) { onComplete({ results: [], page: page, total_pages: 1, total_results: 0 }); return; }
+            if (!config) { 
+                onComplete({ results: [], page: page, total_pages: 1, total_results: 0 }); 
+                return; 
+            }
+
+            // Проверка наличия ключа
+            if (!getTMDBKey()) {
+                onError(new Error('TMDB API key not configured. Please set it in plugin settings.'));
+                return;
+            }
 
             fetchSheetIDs(config.sheet, function(ids) {
                 var mediaType = (categoryKey.indexOf('series') !== -1 || categoryKey === 'tv') ? 'tv' : 'movie';
@@ -335,6 +380,12 @@
                 var config = CATEGORIES_CONFIG[categoryKey];
                 if (!config) { callback({error: new Error('Invalid category')}); return; }
 
+                // Проверка наличия ключа
+                if (!getTMDBKey()) {
+                    callback({error: new Error('TMDB API key not configured')});
+                    return;
+                }
+
                 fetchSheetIDs(config.sheet, function(ids) {
                     var mediaType = (categoryKey.indexOf('series') !== -1 || categoryKey === 'tv') ? 'tv' : 'movie';
                     var pageSize = 20;
@@ -374,6 +425,13 @@
             if (event.type !== 'append') return;
             var data = event.data;
             if (!data || !Array.isArray(data.results)) return;
+            
+            // Проверка ключа при авто-дозагрузке
+            if (!getTMDBKey()) {
+                console.warn('[NUMParser] TMDB API key missing, skipping auto-load');
+                return;
+            }
+            
             var desiredCount = 20;
             var allResults = filterWatchedContent(data.results).filter(function (item) {
                 return item && item.id && (item.title || item.name || item.original_title || item.original_name);
@@ -394,7 +452,7 @@
                             allResults = allResults.concat(filtered);
                         }
                         resolve();
-                    });
+                    }, function() { resolve(); }); // ignore errors on auto-load
                 });
             }
             allResults = allResults.slice(0, desiredCount);
@@ -485,6 +543,28 @@
         values[SOURCE_NAME] = SOURCE_NAME;
 
         Lampa.SettingsApi.addComponent({ component: 'numparser_settings', name: SOURCE_NAME, icon: ICON });
+
+        // 🔑 НОВАЯ НАСТРОЙКА: TMDB API Key
+        Lampa.SettingsApi.addParam({
+            component: 'numparser_settings',
+            param: { 
+                name: 'numparser_tmdb_key', 
+                type: 'input', 
+                placeholder: 'Введите ваш TMDB API ключ',
+                values: '', 
+                default: '' 
+            },
+            field: { 
+                name: '🔑 TMDB API Key',
+                description: 'Ключ API для получения данных с themoviedb.org (обязательно для работы плагина). Получить ключ: https://www.themoviedb.org/settings/api'
+            },
+            onChange: function (value) {
+                Lampa.Storage.set('numparser_tmdb_key', value.trim());
+                // Очистка кэша при смене ключа
+                tmdbCache = {};
+                Lampa.Noty.show('Ключ сохранён! Перезагрузите плагин для применения.', { time: 3000 });
+            }
+        });
 
         Lampa.SettingsApi.addParam({
             component: 'numparser_settings',
@@ -611,6 +691,15 @@
         })();
 
         menuItem.on('hover:enter', function () {
+            // Проверка ключа при входе в плагин
+            if (!getTMDBKey()) {
+                Lampa.Noty.show('⚠️ Укажите TMDB API Key в настройках плагина!', { time: 5000 });
+                Lampa.Activity.push({
+                    component: 'settings',
+                    url: 'numparser_settings'
+                });
+                return;
+            }
             Lampa.Activity.push({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, page: 1 });
         });
     }
