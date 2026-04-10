@@ -1,298 +1,380 @@
 (function () {
     'use strict';
 
-    // ---------------------- КОНСТАНТЫ ----------------------
-    const PLUGIN_NAME = 'V10 v1';
-    const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="24" height="24"><path d="M4 6h16v2H4V6zm2-4h12v2H6V2zm16 8H2v12h20V10zm-2 10H4v-8h16v8z"/></svg>';
-    const GS_URL = 'https://script.google.com/macros/s/AKfycbyjSGRPjqyn3FgfmnMI9H9Y9X8fuDkDqj7nBSvdip6d6Orwe9fqIS_3OcVNB9UMiHBm/exec';
-    const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
-    const TMDB_IMG_BASE = 'https://image.tmdb.org/t/p/w500';
+    var DEFAULT_SOURCE_NAME = 'V10 v1';
+    var SOURCE_NAME = Lampa.Storage.get('v10_source_name', DEFAULT_SOURCE_NAME);
+    var BASE_URL = 'https://script.google.com/macros/s/AKfycbyjSGRPjqyn3FgfmnMI9H9Y9X8fuDkDqj7nBSvdip6d6Orwe9fqIS_3OcVNB9UMiHBm/exec';
+    var TMDB_KEY = 'f348b4586d1791a40d99edd92164cb86';
+    var TMDB_BASE = 'https://api.themoviedb.org/3';
 
-    // Категории: ключ, название, имя листа, тип (movie/tv)
-    const CATEGORIES = [
-        { id: 'top24', title: 'Топ торренты за последние 24 часа', sheet: 'Топ 24ч', type: 'movie' },
-        { id: 'foreign_movies', title: 'Зарубежные фильмы', sheet: 'Зарубежные фильмы', type: 'movie' },
-        { id: 'russian_movies', title: 'Наши фильмы', sheet: 'Наши фильмы', type: 'movie' },
-        { id: 'foreign_series', title: 'Зарубежные сериалы', sheet: 'Зарубежные сериалы', type: 'tv' },
-        { id: 'russian_series', title: 'Наши сериалы', sheet: 'Наши сериалы', type: 'tv' },
-        { id: 'tvshows', title: 'Телевизор', sheet: 'Телевизор', type: 'tv' }
-    ];
+    var ICON = '<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 512 512" style="enable-background:new 0 0 512 512;" xml:space="preserve"><g><path fill="currentColor" d="M256,0C114.6,0,0,114.6,0,256s114.6,256,256,256s256-114.6,256-256S397.4,0,256,0z M256,448c-106,0-192-86-192-192S150,64,256,64s192,86,192,192S362,448,256,448z"/><circle fill="currentColor" cx="176" cy="208" r="32"/><circle fill="currentColor" cx="336" cy="208" r="32"/><path fill="currentColor" d="M256,320c-44.2,0-80-35.8-80-80s35.8-80,80-80s80,35.8,80,80S300.2,320,256,320z"/></g></svg>';
 
-    // Кэш (ID листов и TMDB данные)
-    const cache = {
-        ids: {},     // sheet -> { data: [id], time: timestamp }
-        tmdb: {},    // id_type -> { data: object, time: timestamp }
-        setIds(sheet, ids) {
-            this.ids[sheet] = { data: ids, time: Date.now() };
-        },
-        getIds(sheet) {
-            const entry = this.ids[sheet];
-            if (entry && (Date.now() - entry.time) < 600000) return entry.data; // 10 минут
-            return null;
-        },
-        setTmdb(key, data) {
-            this.tmdb[key] = { data: data, time: Date.now() };
-        },
-        getTmdb(key) {
-            const entry = this.tmdb[key];
-            if (entry && (Date.now() - entry.time) < 3600000) return entry.data; // 1 час
-            return null;
+    var DEFAULT_MIN_PROGRESS = 90;
+    var MIN_PROGRESS = Lampa.Storage.get('v10_min_progress', DEFAULT_MIN_PROGRESS);
+
+    // ==================== ОБЩИЕ УТИЛИТЫ (скопированы из оригинала) ====================
+    function filterWatchedContent(results) {
+        var hideWatched = Lampa.Storage.get('v10_hide_watched', false);
+        if (!hideWatched) return results;
+
+        var favorite_raw = Lampa.Storage.get('favorite', '{}');
+        var favorite = {};
+        try {
+            if (typeof favorite_raw === 'string') favorite = JSON.parse(favorite_raw || '{}');
+        } catch (e) {}
+        if (!favorite || typeof favorite !== 'object') favorite = {};
+        if (!Array.isArray(favorite.card)) favorite.card = [];
+
+        var timeTable = Lampa.Storage.cache('timetable', 300, []);
+
+        return results.filter(function (item) {
+            if (!item) return true;
+
+            var mediaType = (item.first_air_date || item.number_of_seasons) ? 'tv' : 'movie';
+            var checkItem = {
+                id: item.id,
+                media_type: mediaType,
+                original_title: item.original_title || item.original_name || '',
+                title: item.title || item.name || '',
+                original_language: item.original_language || 'en',
+                poster_path: item.poster_path || '',
+                backdrop_path: item.backdrop_path || ''
+            };
+
+            var favoriteItem = Lampa.Favorite.check(checkItem);
+            var watched = !!favoriteItem && !!favoriteItem.history;
+            var thrown = !!favoriteItem && favoriteItem.thrown;
+
+            if (thrown) return false;
+            if (!watched) return true;
+
+            if (watched && mediaType === 'movie') {
+                var hashes = [];
+                if (item.id) hashes.push(Lampa.Utils.hash(String(item.id)));
+                if (item.original_title) hashes.push(Lampa.Utils.hash(item.original_title));
+
+                var hasProgress = false;
+                for (var i = 0; i < hashes.length; i++) {
+                    var view = Lampa.Storage.cache('file_view', 300, [])[hashes[i]];
+                    if (view) {
+                        hasProgress = true;
+                        if (!view.percent || view.percent >= MIN_PROGRESS) return false;
+                    }
+                }
+                return !hasProgress;
+            }
+
+            if (mediaType === 'tv') {
+                var historyEpisodes = getEpisodesFromHistory(item.id, favorite);
+                var timeTableEpisodes = getEpisodesFromTimeTable(item.id, timeTable);
+                var releasedEpisodes = mergeEpisodes(historyEpisodes, timeTableEpisodes);
+                return !allEpisodesWatched(item.original_title || item.original_name || item.title || item.name, releasedEpisodes);
+            }
+            return true;
+        });
+    }
+
+    function getEpisodesFromHistory(id, favorite) { /* оригинальная функция */ 
+        if (!favorite || !Array.isArray(favorite.card)) return [];
+        var historyCard = favorite.card.filter(function (card) { return card.id === id && Array.isArray(card.seasons) && card.seasons.length > 0; })[0];
+        if (!historyCard) return [];
+        var realSeasons = historyCard.seasons.filter(function (season) { return season.season_number > 0 && season.episode_count > 0 && season.air_date && new Date(season.air_date) < new Date(); });
+        if (realSeasons.length === 0) return [];
+        var seasonEpisodes = [];
+        for (var i = 0; i < realSeasons.length; i++) {
+            var season = realSeasons[i];
+            for (var e = 1; e <= season.episode_count; e++) {
+                seasonEpisodes.push({ season_number: season.season_number, episode_number: e });
+            }
         }
+        return seasonEpisodes;
+    }
+
+    function getEpisodesFromTimeTable(id, timeTable) { /* оригинальная функция */ 
+        if (!Array.isArray(timeTable)) return [];
+        var serial = timeTable.find(function (item) { return item.id === id && Array.isArray(item.episodes); });
+        return serial ? serial.episodes.filter(function (episode) { return episode.season_number > 0 && episode.air_date && new Date(episode.air_date) < new Date(); }) : [];
+    }
+
+    function mergeEpisodes(arr1, arr2) {
+        var merged = arr1.concat(arr2);
+        var unique = [];
+        merged.forEach(function (episode) {
+            if (!unique.some(function (e) { return e.season_number === episode.season_number && e.episode_number === episode.episode_number; })) {
+                unique.push(episode);
+            }
+        });
+        return unique;
+    }
+
+    function allEpisodesWatched(title, episodes) {
+        if (!episodes || !episodes.length) return false;
+        return episodes.every(function (episode) {
+            var hash = Lampa.Utils.hash([episode.season_number, episode.season_number > 10 ? ':' : '', episode.episode_number, title].join(''));
+            var view = Lampa.Timeline.view(hash);
+            return view.percent > MIN_PROGRESS;
+        });
+    }
+
+    // ==================== КАТЕГОРИИ ПЛАГИНА ====================
+    var CATEGORIES = {
+        top: { sheet: 'Топ 24ч', title: 'Топ торренты за последние 24 часа', type: 'movie' },
+        foreign_movies: { sheet: 'Зарубежные фильмы', title: 'Зарубежные фильмы', type: 'movie' },
+        russian_movies: { sheet: 'Наши фильмы', title: 'Наши фильмы', type: 'movie' },
+        foreign_series: { sheet: 'Зарубежные сериалы', title: 'Зарубежные сериалы', type: 'tv' },
+        russian_series: { sheet: 'Наши сериалы', title: 'Наши сериалы', type: 'tv' },
+        tv: { sheet: 'Телевизор', title: 'Телевизор', type: 'tv' }
     };
 
-    // ---------------------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------------------
-    function parseCSV(csvText) {
-        const lines = csvText.split(/\r?\n/);
-        const ids = [];
-        for (let i = 1; i < lines.length; i++) {
-            const row = lines[i].split(',');
-            if (row.length > 5 && row[5]) {
-                const id = parseInt(row[5].replace(/"/g, '').trim());
-                if (!isNaN(id)) ids.push(id);
-            }
+    // ==================== ОСНОВНОЙ СЕРВИС API ====================
+    function V10ApiService() {
+        var self = this;
+        self.network = new Lampa.Reguest();
+
+        // Получение TMDB-карточки по ID
+        function fetchTMDBCard(id, type, onSuccess, onError) {
+            var lang = Lampa.Storage.get('tmdb_lang', 'ru');
+            var url = TMDB_BASE + '/' + type + '/' + id + '?api_key=' + TMDB_KEY + '&language=' + lang;
+            self.network.silent(url, function (data) {
+                if (!data || !data.id) return onError(new Error('Нет данных от TMDB'));
+                var item = {
+                    id: data.id,
+                    poster_path: data.poster_path || '',
+                    backdrop_path: data.backdrop_path || '',
+                    overview: data.overview || '',
+                    vote_average: data.vote_average || 0,
+                    title: data.title || data.name || '',
+                    original_title: data.original_title || data.original_name || '',
+                    original_language: data.original_language || 'ru',
+                    first_air_date: data.first_air_date || data.release_date || '',
+                    number_of_seasons: data.number_of_seasons || 0,
+                    type: type,
+                    source: SOURCE_NAME
+                };
+                onSuccess(item);
+            }, onError);
         }
-        return ids;
-    }
 
-    // Получение списка TMDB ID из Google Sheets
-    function fetchIdsFromSheet(sheetName) {
-        return new Promise((resolve, reject) => {
-            const cached = cache.getIds(sheetName);
-            if (cached) {
-                resolve(cached);
-                return;
-            }
+        // Основная функция получения списка из Google Sheets + TMDB
+        self.getList = function (sheetName, type, onComplete, onError) {
+            var url = BASE_URL + '?sheet=' + encodeURIComponent(sheetName);
+            self.network.silent(url, function (raw) {
+                if (!raw) return onError(new Error('Пустой ответ от Google'));
 
-            const url = GS_URL + '?sheet=' + encodeURIComponent(sheetName);
-            fetch(url, { method: 'GET', headers: { 'Accept': 'application/json,text/csv' } })
-                .then(response => response.text())
-                .then(text => {
-                    let ids = [];
-                    // Пробуем JSON
-                    try {
-                        const json = JSON.parse(text);
-                        if (Array.isArray(json)) {
-                            // Массив массивов: каждая строка - массив
-                            json.forEach(row => {
-                                if (row && row.length > 5 && row[5]) {
-                                    const id = parseInt(row[5]);
-                                    if (!isNaN(id)) ids.push(id);
-                                }
-                            });
-                        } else if (json.values && Array.isArray(json.values)) {
-                            json.values.forEach(row => {
-                                if (row && row.length > 5 && row[5]) {
-                                    const id = parseInt(row[5]);
-                                    if (!isNaN(id)) ids.push(id);
-                                }
-                            });
-                        } else {
-                            // Объект с ключами, содержащими F
-                            Object.values(json).forEach(item => {
-                                if (item && (item.F || item['F'])) {
-                                    const id = parseInt(item.F || item['F']);
-                                    if (!isNaN(id)) ids.push(id);
-                                }
-                            });
-                        }
-                    } catch(e) {
-                        // Не JSON - парсим как CSV
-                        ids = parseCSV(text);
+                // Поддержка разных форматов ответа Google Apps Script
+                var ids = [];
+                if (Array.isArray(raw)) {
+                    ids = raw.flat().filter(Boolean);
+                } else if (raw.values && Array.isArray(raw.values)) {
+                    // Классический формат Google Sheets API (values)
+                    ids = raw.values.slice(1).map(function (row) {
+                        return row[5] || row[0]; // колонка F = индекс 5 (0-based)
+                    }).filter(Boolean);
+                } else if (typeof raw === 'string') {
+                    try { ids = JSON.parse(raw); if (!Array.isArray(ids)) ids = [ids]; } catch (e) {}
+                }
+
+                // Ограничиваем количество (чтобы не грузить сотни карточек)
+                ids = ids.slice(0, 60);
+
+                var results = [];
+                var index = 0;
+
+                function next() {
+                    if (index >= ids.length) {
+                        results = filterWatchedContent(results);
+                        onComplete({
+                            results: results,
+                            page: 1,
+                            total_pages: 1,
+                            total_results: results.length
+                        });
+                        return;
                     }
+                    fetchTMDBCard(ids[index], type, function (card) {
+                        results.push(card);
+                        index++;
+                        next();
+                    }, function () {
+                        index++; // пропускаем ошибочные ID
+                        next();
+                    });
+                }
+                next();
+            }, onError);
+        };
 
-                    if (ids.length === 0) {
-                        reject(new Error('Не найдено ID в листе ' + sheetName));
-                    } else {
-                        cache.setIds(sheetName, ids);
-                        resolve(ids);
-                    }
-                })
-                .catch(error => reject(error));
-        });
-    }
+        // Метод list (вызывается при открытии категории)
+        self.list = function (params, onComplete, onError) {
+            params = params || {};
+            var key = params.url || 'top';
+            var cat = CATEGORIES[key];
+            if (!cat) return onComplete({ results: [], page: 1, total_pages: 1 });
 
-    // Загрузка данных фильма/сериала из TMDB
-    function fetchTmdbItem(id, type) {
-        return new Promise((resolve) => {
-            const cacheKey = id + '_' + type;
-            const cached = cache.getTmdb(cacheKey);
-            if (cached) {
-                resolve(cached);
-                return;
-            }
+            self.getList(cat.sheet, cat.type, function (data) {
+                onComplete(data);
+            }, onError);
+        };
 
-            const endpoint = type === 'movie' ? `movie/${id}` : `tv/${id}`;
-            const url = `https://api.themoviedb.org/3/${endpoint}?api_key=${TMDB_API_KEY}&language=ru-RU`;
+        // Полная карточка (используем стандартный TMDB)
+        self.full = function (params, onSuccess, onError) {
+            var card = params.card;
+            params.method = !!(card.number_of_seasons || card.seasons || card.first_air_date) ? 'tv' : 'movie';
+            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+        };
 
-            fetch(url)
-                .then(res => res.json())
-                .then(item => {
-                    if (item && !item.status_code) {
-                        const film = {
-                            id: item.id,
-                            title: item.title || item.name,
-                            original_title: item.original_title || item.original_name,
-                            poster_path: item.poster_path ? TMDB_IMG_BASE + item.poster_path : null,
-                            backdrop_path: item.backdrop_path ? TMDB_IMG_BASE + item.backdrop_path : null,
-                            overview: item.overview,
-                            release_date: item.release_date || item.first_air_date,
-                            vote_average: item.vote_average,
-                            type: type
+        // Главная страница категории (6 подборок)
+        self.category = function (params, onSuccess, onError) {
+            var partsData = [];
+
+            Object.keys(CATEGORIES).forEach(function (key) {
+                var cat = CATEGORIES[key];
+                partsData.push(function (callback) {
+                    self.getList(cat.sheet, cat.type, function (json) {
+                        var result = {
+                            url: key,
+                            title: cat.title,
+                            page: 1,
+                            total_results: json.results.length,
+                            total_pages: 1,
+                            more: false,
+                            results: json.results,
+                            source: SOURCE_NAME
                         };
-                        cache.setTmdb(cacheKey, film);
-                        resolve(film);
-                    } else {
-                        resolve(null);
-                    }
-                })
-                .catch(() => resolve(null));
+                        callback(result);
+                    }, function (err) {
+                        callback({ error: err });
+                    });
+                });
+            });
+
+            function loadPart(partLoaded, partEmpty) {
+                Lampa.Api.partNext(partsData, 6, function (result) {
+                    partLoaded(result);
+                }, function (error) {
+                    partEmpty(error);
+                });
+            }
+            loadPart(onSuccess, onError);
+            return loadPart;
+        };
+
+        // main — редирект на категорию
+        self.main = function (params, onComplete, onError) {
+            if (typeof onComplete === 'function') onComplete([]);
+            try {
+                var current = Lampa.Storage.get('source', 'tmdb');
+                if (current !== SOURCE_NAME) return;
+                setTimeout(function () {
+                    Lampa.Activity.replace({
+                        title: SOURCE_NAME,
+                        component: 'category',
+                        source: SOURCE_NAME,
+                        page: 1,
+                        url: ''
+                    });
+                }, 0);
+            } catch (e) {}
+        };
+    }
+
+    // ==================== ЗАПУСК ПЛАГИНА ====================
+    function startPlugin() {
+        if (window.v10_plugin) return;
+        window.v10_plugin = true;
+
+        var newName = Lampa.Storage.get('v10_settings', SOURCE_NAME);
+
+        // Настройки
+        Lampa.SettingsApi.addComponent({ component: 'v10_settings', name: SOURCE_NAME, icon: ICON });
+
+        Lampa.SettingsApi.addParam({
+            component: 'v10_settings',
+            param: { name: 'v10_hide_watched', type: 'trigger', default: Lampa.Storage.get('v10_hide_watched', false) },
+            field: { name: 'Скрыть просмотренное', description: 'Скрывать просмотренные фильмы и сериалы' },
+            onChange: function (value) {
+                Lampa.Storage.set('v10_hide_watched', value);
+                var active = Lampa.Activity.active();
+                if (active && active.activity_line && active.activity_line.listener) {
+                    active.activity_line.listener.send({ type: 'append', data: active.activity_line.card_data, line: active.activity_line });
+                } else {
+                    location.reload();
+                }
+            }
         });
-    }
 
-    // Загрузка полной категории (ID + TMDB данные)
-    async function loadCategory(sheetName, type, categoryTitle) {
-        Lampa.Notification.show('Загрузка ' + categoryTitle + '...', 3000);
-        Lampa.Loader.show();
-
-        try {
-            // 1. Получаем ID из таблицы
-            const ids = await fetchIdsFromSheet(sheetName);
-            if (!ids.length) throw new Error('Нет ID');
-
-            // 2. Загружаем данные из TMDB
-            const items = [];
-            let loaded = 0;
-            const total = ids.length;
-
-            for (const id of ids) {
-                const item = await fetchTmdbItem(id, type);
-                if (item) items.push(item);
-                loaded++;
-                if (loaded % 5 === 0 || loaded === total) {
-                    Lampa.Notification.show(`Загружено ${loaded} из ${total}`, 1000);
-                }
+        Lampa.SettingsApi.addParam({
+            component: 'v10_settings',
+            param: { name: 'v10_min_progress', type: 'select', values: { '50': '50%', '60': '60%', '70': '70%', '80': '80%', '90': '90%', '100': '100%' }, default: DEFAULT_MIN_PROGRESS.toString() },
+            field: { name: 'Порог просмотра', description: 'Минимальный процент для скрытия' },
+            onChange: function (value) {
+                MIN_PROGRESS = parseInt(value);
+                Lampa.Storage.set('v10_min_progress', MIN_PROGRESS);
             }
+        });
 
-            Lampa.Loader.hide();
-
-            if (items.length === 0) {
-                Lampa.Notification.show('Не удалось загрузить контент для ' + categoryTitle, 5000);
-                return;
+        Lampa.SettingsApi.addParam({
+            component: 'v10_settings',
+            param: { name: 'v10_source_name', type: 'input', default: DEFAULT_SOURCE_NAME },
+            field: { name: 'Название источника', description: 'Как отображается в меню' },
+            onChange: function (value) {
+                newName = value;
+                $('.v10_text').text(value);
+                Lampa.Settings.update();
             }
+        });
 
-            // 3. Открываем список в Lampa
-            Lampa.Activity.push({
-                component: 'list',
-                data: {
-                    items: items,
-                    title: categoryTitle,
-                    list_type: type === 'movie' ? 'movie' : 'serial'
-                }
-            });
+        var v10Api = new V10ApiService();
+        Lampa.Api.sources.v10 = v10Api;
 
-        } catch (error) {
-            Lampa.Loader.hide();
-            console.error(error);
-            Lampa.Notification.show('Ошибка: ' + (error.message || 'Неизвестная ошибка'), 5000);
-        }
-    }
+        Object.defineProperty(Lampa.Api.sources, SOURCE_NAME, {
+            get: function () { return v10Api; }
+        });
 
-    // ---------------------- КОМПОНЕНТ СПИСКА КАТЕГОРИЙ ----------------------
-    Lampa.Component.add('v10_v1_categories', {
-        template: 'categories',
-        data: function() {
-            return { categories: CATEGORIES };
-        },
-        render: function(data) {
-            let html = '<div class="v10-v1-categories selector-list" style="padding: 20px;">';
-            data.categories.forEach((cat, idx) => {
-                html += `<div class="selector-item" data-index="${idx}">${cat.title}</div>`;
-            });
-            html += '</div>';
-
-            this.dom.html(html);
-
-            // Обработка кликов
-            this.dom.find('.selector-item').on('click', (e) => {
-                const index = parseInt($(e.currentTarget).data('index'));
-                const cat = data.categories[index];
-                if (cat) {
-                    loadCategory(cat.sheet, cat.type, cat.title);
-                }
-            });
-        }
-    });
-
-    // ---------------------- ДОБАВЛЕНИЕ ПУНКТА В ЛЕВОЕ МЕНЮ ----------------------
-    function addMenuItem() {
-        // Проверяем, не добавлен ли уже
-        if ($('.menu .menu__list .menu__item[data-action="v10_v1"]').length) return;
-
-        const menuItem = $(`
-            <li data-action="v10_v1" class="menu__item selector">
-                <div class="menu__ico">${ICON}</div>
-                <div class="menu__text">${PLUGIN_NAME}</div>
-            </li>
-        `);
+        // Добавляем пункт в левое меню
+        var menuItem = $('<li data-action="v10" class="menu__item selector"><div class="menu__ico">' + ICON + '</div><div class="menu__text v10_text">' + SOURCE_NAME + '</div></li>');
         $('.menu .menu__list').eq(0).append(menuItem);
 
-        menuItem.on('hover:enter', function() {
+        menuItem.on('hover:enter', function () {
             Lampa.Activity.push({
-                title: PLUGIN_NAME,
-                component: 'v10_v1_categories'
+                title: SOURCE_NAME,
+                component: 'category',
+                source: SOURCE_NAME,
+                page: 1
             });
         });
-    }
 
-    // ---------------------- НАСТРОЙКИ (опционально) ----------------------
-    function addSettings() {
-        Lampa.SettingsApi.addComponent({
-            component: 'v10_v1_settings',
-            name: PLUGIN_NAME,
-            icon: ICON
-        });
+        // Авто-редирект если выбран как основной источник
+        (function () {
+            if (window.__v10_source_watch) return;
+            window.__v10_source_watch = true;
 
-        // Можно добавить настройку для кэша или видимости категорий, но пока оставим минимально
-        Lampa.SettingsApi.addParam({
-            component: 'v10_v1_settings',
-            param: {
-                name: 'v10_v1_clear_cache',
-                type: 'trigger',
-                default: false
-            },
-            field: {
-                name: 'Сбросить кэш',
-                description: 'Очистить временные данные (ID и TMDB)'
-            },
-            onChange: function(value) {
-                if (value === true || value === 'true') {
-                    cache.ids = {};
-                    cache.tmdb = {};
-                    Lampa.Notification.show('Кэш очищен', 2000);
-                    // Сбросить переключатель обратно
-                    Lampa.Storage.set('v10_v1_clear_cache', false);
+            var origSet = Lampa.Storage.set;
+            Lampa.Storage.set = function (key, value) {
+                var res = origSet.apply(this, arguments);
+                if (key === 'source' && value === SOURCE_NAME) {
+                    setTimeout(function () {
+                        Lampa.Activity.replace({
+                            title: SOURCE_NAME,
+                            component: 'category',
+                            source: SOURCE_NAME,
+                            page: 1,
+                            url: ''
+                        });
+                    }, 100);
                 }
-            }
-        });
+                return res;
+            };
+        })();
+
+        // Регистрация источника в списке
+        try {
+            var sources = Object.assign({}, Lampa.Params.values && Lampa.Params.values['source'] ? Lampa.Params.values['source'] : {});
+            sources[SOURCE_NAME] = SOURCE_NAME;
+            Lampa.Params.select('source', sources, 'tmdb');
+        } catch (e) {}
     }
 
-    // ---------------------- ЗАПУСК ПЛАГИНА ----------------------
-    function startPlugin() {
-        if (window.v10_v1_plugin_started) return;
-        window.v10_v1_plugin_started = true;
-
-        addMenuItem();
-        addSettings();
-    }
-
-    // Ждём готовности Lampa
-    if (window.appready) {
-        startPlugin();
-    } else {
-        Lampa.Listener.follow('app', function(event) {
-            if (event.type === 'ready') {
-                startPlugin();
-            }
-        });
-    }
+    if (window.appready) startPlugin();
+    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') startPlugin(); });
 })();
