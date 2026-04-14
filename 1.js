@@ -4,7 +4,6 @@
     var SOURCE_NAME = 'V10 v2';
     var API_URL = 'https://script.google.com/macros/s/AKfycbxildpf3OrmIbfLsP3F2Kg0SC2JgKoFf-4R6ZV7pjGP8td9KU-oA8hvH2DcYx-B77Fq/exec';
 
-    // ⚠️ ВАЖНО: категории вручную (как в GAS)
     var SHEETS = [
         'Топ 24ч',
         'Зарубежные фильмы',
@@ -18,60 +17,80 @@
         var network = new Lampa.Reguest();
 
         this.category = function (params, onSuccess) {
+
             var parts = [];
 
             SHEETS.forEach(function (sheet) {
+
                 parts.push(function (next) {
-                    loadSheet(sheet, next);
+
+                    var url = API_URL + '?sheet=' + encodeURIComponent(sheet);
+
+                    console.log('LOAD:', sheet, url);
+
+                    network.silent(url, function (json) {
+
+                        if (!json) {
+                            console.log('EMPTY JSON:', sheet);
+                            return next(makeEmpty(sheet));
+                        }
+
+                        if (json.error) {
+                            console.log('API ERROR:', sheet, json.error);
+                            return next(makeEmpty(sheet));
+                        }
+
+                        var results = (json.results || []).map(function (item) {
+                            return {
+                                id: item.id,
+                                title: item.title,
+                                name: item.title,
+                                poster_path: normalize(item.poster_path),
+                                backdrop_path: normalize(item.poster_path),
+                                vote_average: item.vote_average || 0,
+                                type: item.type || 'movie',
+                                source: SOURCE_NAME
+                            };
+                        });
+
+                        console.log('SUCCESS:', sheet, results.length);
+
+                        next({
+                            title: sheet,
+                            results: results, // даже если 0 — покажется категория
+                            page: 1,
+                            total_pages: 1
+                        });
+
+                    }, function () {
+                        console.log('NETWORK ERROR:', sheet);
+                        next(makeEmpty(sheet));
+                    });
+
                 });
+
             });
 
-            Lampa.Api.partNext(parts, 3, function (data) {
+            Lampa.Api.partNext(parts, 2, function (data) {
                 onSuccess(data);
             });
         };
 
-        function loadSheet(sheet, next) {
-            var url = API_URL + '?sheet=' + encodeURIComponent(sheet);
-
-            network.silent(url, function (json) {
-
-                if (!json || json.error) {
-                    next({ title: sheet, results: [] });
-                    return;
-                }
-
-                var results = (json.results || []).map(function (item) {
-                    return {
-                        id: item.id,
-                        title: item.title,
-                        name: item.title,
-                        poster_path: normalizeImg(item.poster_path),
-                        backdrop_path: normalizeImg(item.poster_path),
-                        vote_average: item.vote_average || 0,
-                        type: item.type || 'movie',
-                        source: SOURCE_NAME
-                    };
-                });
-
-                next({
-                    title: sheet,
-                    results: results,
-                    page: 1,
-                    total_pages: 1
-                });
-
-            }, function () {
-                next({ title: sheet, results: [] });
-            });
-        }
-
         this.full = function (params, onSuccess, onError) {
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
+
+        function makeEmpty(sheet) {
+            return {
+                title: sheet,
+                results: [],
+                page: 1,
+                total_pages: 1
+            };
+        }
     }
 
-    function normalizeImg(url) {
+    function normalize(url) {
         if (!url) return '';
         if (url.indexOf('http') === 0) return url;
         return 'https://image.tmdb.org/t/p/w500' + url;
@@ -84,10 +103,9 @@
         var api = new Api();
         Lampa.Api.sources[SOURCE_NAME] = api;
 
-        // кнопка в меню
-        var button = $('<li class="menu__item selector"><div class="menu__text">' + SOURCE_NAME + '</div></li>');
+        var btn = $('<li class="menu__item selector"><div class="menu__text">' + SOURCE_NAME + '</div></li>');
 
-        button.on('hover:enter', function () {
+        btn.on('hover:enter', function () {
             Lampa.Activity.push({
                 component: 'category',
                 source: SOURCE_NAME,
@@ -96,7 +114,7 @@
             });
         });
 
-        $('.menu .menu__list').eq(0).append(button);
+        $('.menu .menu__list').eq(0).append(btn);
     }
 
     if (window.appready) start();
