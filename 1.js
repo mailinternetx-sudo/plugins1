@@ -2,7 +2,7 @@
     'use strict';
 
     var SOURCE_NAME = 'V10 v2';
-    var API_URL = 'https://script.google.com/macros/s/AKfycbzpgxklmP05jLgPUf-GU2I-jLRDr7o22XelbzzVoSgvY8Hel8-3bkpHobK6bYweaG2A/exec';
+    var API_URL = 'https://script.google.com/macros/s/AKfycbyyl-D2v4BIqJtc6dg2HDG7ilZwc5JZrCV5r4oHZtc4hJiuMN08oCTRYp7lkySwTDCB/exec';
 
     var SHEETS = [
         'Топ 24ч',
@@ -17,26 +17,14 @@
         var network = new Lampa.Reguest();
 
         this.category = function (params, onSuccess) {
-
             var parts = [];
 
             SHEETS.forEach(function (sheet) {
-
                 parts.push(function (next) {
-
                     var url = API_URL + '?sheet=' + encodeURIComponent(sheet);
 
-                    console.log('LOAD:', sheet, url);
-
                     network.silent(url, function (json) {
-
-                        if (!json) {
-                            console.log('EMPTY JSON:', sheet);
-                            return next(makeEmpty(sheet));
-                        }
-
-                        if (json.error) {
-                            console.log('API ERROR:', sheet, json.error);
+                        if (!json || json.error) {
                             return next(makeEmpty(sheet));
                         }
 
@@ -45,6 +33,7 @@
                                 id: item.id,
                                 title: item.title,
                                 name: item.title,
+                                original_title: item.title, // Добавлено для корректного поиска
                                 poster_path: normalize(item.poster_path),
                                 backdrop_path: normalize(item.poster_path),
                                 vote_average: item.vote_average || 0,
@@ -53,31 +42,46 @@
                             };
                         });
 
-                        console.log('SUCCESS:', sheet, results.length);
-
                         next({
                             title: sheet,
-                            results: results, // даже если 0 — покажется категория
+                            results: results,
                             page: 1,
                             total_pages: 1
                         });
 
                     }, function () {
-                        console.log('NETWORK ERROR:', sheet);
                         next(makeEmpty(sheet));
                     });
-
                 });
-
             });
 
             Lampa.Api.partNext(parts, 2, function (data) {
-                onSuccess(data);
+                // 🔥 Улучшение: Скрываем пустые категории, чтобы не мусорить в меню
+                var filteredData = data.filter(function(cat) {
+                    return cat.results && cat.results.length > 0;
+                });
+
+                // Если все пустые (например таблица еще не обновилась), показываем хотя бы заглушку
+                if (filteredData.length === 0) {
+                    filteredData = [{
+                        title: 'Загрузка данных...',
+                        results: [],
+                        page: 1,
+                        total_pages: 1
+                    }];
+                }
+
+                onSuccess(filteredData);
             });
         };
 
         this.full = function (params, onSuccess, onError) {
-            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+            // При клике на фильм ищем его через стандартный метод TMDB внутри Lamp'ы
+            if (params.id) {
+                Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+            } else {
+                onError('No ID');
+            }
         };
 
         function makeEmpty(sheet) {
@@ -92,6 +96,7 @@
 
     function normalize(url) {
         if (!url) return '';
+        // Google скрипт теперь отдает полные URL, проверяем это
         if (url.indexOf('http') === 0) return url;
         return 'https://image.tmdb.org/t/p/w500' + url;
     }
