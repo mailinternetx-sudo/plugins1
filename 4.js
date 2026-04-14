@@ -1,118 +1,125 @@
 (function () {
     'use strict';
 
-    const PLUGIN_NAME = 'V10 ULTRA';
-    const SOURCE_NAME = 'v10_ultra';
+    var SOURCE_NAME = 'V10 v2';
+    var API_URL = 'https://script.google.com/macros/s/AKfycbwFbZ9M0mMzOsk6vDHK4_5pCKGAzl0OT8RLbWad9C6aPnvN31p7YjuL1hdmD_Y4rDt3/exec';
 
-    const GS_URL = 'https://script.google.com/macros/s/AKfycbzGzQVf65Fk9xL9Z9az0dANO7T2BzCIzr-H1xdUnVhWcdLy15NE2yZf_x4ZpgxO3kgT/exec';
-
-    const ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4z"/></svg>';
-
-    const CATEGORIES = {
-        top24: { title: 'Топ 24ч', sheet: 'Топ 24ч' },
-        films: { title: 'Фильмы', sheet: 'Зарубежные фильмы' },
-        rusfilms: { title: 'Наши фильмы', sheet: 'Наши фильмы' },
-        series: { title: 'Сериалы', sheet: 'Зарубежные сериалы' },
-        russeries: { title: 'Наши сериалы', sheet: 'Наши сериалы' }
-    };
-
-    function normalize(item) {
-        return {
-            id: item.id,
-            title: item.title,
-            original_title: item.title,
-            poster_path: item.poster_path,
-            backdrop_path: item.poster_path,
-            overview: '',
-            vote_average: item.vote_average,
-            type: item.type
-        };
-    }
+    var SHEETS = [
+        'Топ 24ч',
+        'Зарубежные фильмы',
+        'Наши фильмы',
+        'Зарубежные сериалы',
+        'Наши сериалы',
+        'Телевизор'
+    ];
 
     function Api() {
-        this.discovery = false;
+        var network = new Lampa.Reguest();
 
-        this.list = function (params, onComplete, onError) {
-            const cat = CATEGORIES[params.url];
-            if (!cat) return onError();
+        this.category = function (params, onSuccess) {
 
-            Lampa.Loader.show();
+            var parts = [];
 
-            fetch(GS_URL + '?sheet=' + encodeURIComponent(cat.sheet))
-                .then(r => r.json())
-                .then(json => {
-                    const items = (json.results || []).map(normalize);
+            SHEETS.forEach(function (sheet) {
 
-                    Lampa.Loader.hide();
+                parts.push(function (next) {
 
-                    onComplete({
-                        results: items,
-                        page: 1,
-                        total_pages: 1
+                    var url = API_URL + '?sheet=' + encodeURIComponent(sheet);
+
+                    console.log('LOAD:', sheet, url);
+
+                    network.silent(url, function (json) {
+
+                        if (!json) {
+                            console.log('EMPTY JSON:', sheet);
+                            return next(makeEmpty(sheet));
+                        }
+
+                        if (json.error) {
+                            console.log('API ERROR:', sheet, json.error);
+                            return next(makeEmpty(sheet));
+                        }
+
+                        var results = (json.results || []).map(function (item) {
+                            return {
+                                id: item.id,
+                                title: item.title,
+                                name: item.title,
+                                poster_path: normalize(item.poster_path),
+                                backdrop_path: normalize(item.poster_path),
+                                vote_average: item.vote_average || 0,
+                                type: item.type || 'movie',
+                                source: SOURCE_NAME
+                            };
+                        });
+
+                        console.log('SUCCESS:', sheet, results.length);
+
+                        next({
+                            title: sheet,
+                            results: results, // даже если 0 — покажется категория
+                            page: 1,
+                            total_pages: 1
+                        });
+
+                    }, function () {
+                        console.log('NETWORK ERROR:', sheet);
+                        next(makeEmpty(sheet));
                     });
-                })
-                .catch(err => {
-                    Lampa.Loader.hide();
-                    Lampa.Notification.show('Ошибка API');
-                    onError(err);
+
                 });
+
+            });
+
+            Lampa.Api.partNext(parts, 2, function (data) {
+                onSuccess(data);
+            });
         };
 
         this.full = function (params, onSuccess, onError) {
-            params.method = params.card.type;
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
+
+        function makeEmpty(sheet) {
+            return {
+                title: sheet,
+                results: [],
+                page: 1,
+                total_pages: 1
+            };
+        }
     }
 
-    Lampa.Api.sources[SOURCE_NAME] = new Api();
-
-    Lampa.Component.add('v10_ultra', {
-        render: function () {
-            let html = '<div class="selector-list">';
-
-            Object.keys(CATEGORIES).forEach(key => {
-                html += `<div class="selector-item" data-key="${key}">${CATEGORIES[key].title}</div>`;
-            });
-
-            html += '</div>';
-            this.html(html);
-
-            this.find('.selector-item').on('click', (e) => {
-                const key = $(e.currentTarget).data('key');
-
-                Lampa.Activity.push({
-                    title: CATEGORIES[key].title,
-                    component: 'category',
-                    source: SOURCE_NAME,
-                    url: key
-                });
-            });
-        }
-    });
+    function normalize(url) {
+        if (!url) return '';
+        if (url.indexOf('http') === 0) return url;
+        return 'https://image.tmdb.org/t/p/w500' + url;
+    }
 
     function start() {
-        if ($('.menu__item[data-action="v10_ultra"]').length) return;
+        if (window.v10v2_ready) return;
+        window.v10v2_ready = true;
 
-        const item = $(`
-            <li data-action="v10_ultra" class="menu__item selector">
-                <div class="menu__ico">${ICON}</div>
-                <div class="menu__text">${PLUGIN_NAME}</div>
-            </li>
-        `);
+        var api = new Api();
+        Lampa.Api.sources[SOURCE_NAME] = api;
 
-        $('.menu .menu__list').eq(0).append(item);
+        var btn = $('<li class="menu__item selector"><div class="menu__text">' + SOURCE_NAME + '</div></li>');
 
-        item.on('hover:enter', () => {
+        btn.on('hover:enter', function () {
             Lampa.Activity.push({
-                title: PLUGIN_NAME,
-                component: 'v10_ultra'
+                component: 'category',
+                source: SOURCE_NAME,
+                title: SOURCE_NAME,
+                page: 1
             });
         });
+
+        $('.menu .menu__list').eq(0).append(btn);
     }
 
     if (window.appready) start();
     else {
-        Lampa.Listener.follow('app', e => {
+        Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready') start();
         });
     }
