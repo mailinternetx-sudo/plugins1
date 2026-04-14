@@ -4,7 +4,7 @@
     const PLUGIN_NAME = 'V10 ULTRA';
     const SOURCE_NAME = 'v10_ultra';
 
-    const GS_URL = 'https://script.google.com/macros/s/AKfycbxay99urgzall0AgamtGZQ-hKJLKjbkGRNooryqyfHWFoM2K_PW9U2hnK95WeETGSeP/exec';
+    const GS_URL = 'https://script.google.com/macros/s/AKfycbzhYIM6Gkn2VjiBZlRpfQpOa8W7eJkSAeBn3Fw6_sgeIoJMJffOfL14SuiY0zaniZvS/exec';
 
     const ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4z"/></svg>';
 
