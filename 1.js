@@ -1,120 +1,137 @@
 (function () {
-    'use strict';
+'use strict';
 
-    const PLUGIN_NAME = 'V10 ULTRA';
-    const SOURCE_NAME = 'v10_ultra';
+const SOURCE_NAME = 'v10_max';
+const PLUGIN_NAME = 'V10 MAX';
+const GS_URL = 'https://script.google.com/macros/s/AKfycbx9HK-M8HAcuw8k5Qbr-1kz8StaqHgopROy9_x3cH9R3UwmkGkTQw0HF9tglopHBpfV/exec';
 
-    const GS_URL = 'https://script.google.com/macros/s/AKfycbybsiitGj38n50afUyZJobqfH_b7TxnzwB5NPtLgy3Y0NfKLQwdQhLnNqoyOzlm_GJw/exec';
+const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 
-    const ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4z"/></svg>';
+const CATEGORIES = {
+    top24: 'Топ 24ч',
+    movies: 'Зарубежные фильмы',
+    rus_movies: 'Наши фильмы',
+    series: 'Зарубежные сериалы',
+    rus_series: 'Наши сериалы',
+    tv: 'Телевизор'
+};
 
-    const CATEGORIES = {
-        top24: { title: 'Топ 24ч', sheet: 'Топ 24ч' },
-        films: { title: 'Фильмы', sheet: 'Зарубежные фильмы' },
-        rusfilms: { title: 'Наши фильмы', sheet: 'Наши фильмы' },
-        series: { title: 'Сериалы', sheet: 'Зарубежные сериалы' },
-        russeries: { title: 'Наши сериалы', sheet: 'Наши сериалы' }
+// ===== API =====
+function Api() {
+
+    this.list = function (params, onComplete, onError) {
+
+        const sheet = CATEGORIES[params.url];
+        if (!sheet) return onError('no category');
+
+        Lampa.Loader.show();
+
+        fetch(GS_URL + '?sheet=' + encodeURIComponent(sheet))
+            .then(r => r.json())
+            .then(json => {
+
+                let results = (json.results || []).map(item => {
+
+                    let poster = item.poster_path || '';
+
+                    // если ссылка полная — оставляем
+                    if (poster.indexOf('http') === -1 && poster) {
+                        poster = TMDB_IMG + poster;
+                    }
+
+                    return {
+                        id: item.id,
+                        title: item.title,
+                        name: item.name,
+                        original_title: item.original_title,
+                        poster_path: poster,
+                        backdrop_path: poster,
+                        overview: item.overview || '',
+                        vote_average: item.vote_average || 0,
+                        first_air_date: item.media_type === 'tv' ? '2020' : null,
+                        release_date: item.media_type === 'movie' ? '2020' : null
+                    };
+                });
+
+                Lampa.Loader.hide();
+
+                onComplete({
+                    results: results,
+                    page: 1,
+                    total_pages: 1,
+                    total_results: results.length
+                });
+
+            })
+            .catch(e => {
+                Lampa.Loader.hide();
+                console.log(e);
+                onError(e);
+            });
     };
 
-    function normalize(item) {
-        return {
-            id: item.id,
-            title: item.title,
-            original_title: item.title,
-            poster_path: item.poster_path,
-            backdrop_path: item.poster_path,
-            overview: '',
-            vote_average: item.vote_average,
-            type: item.type
-        };
-    }
+    this.full = function (params, onSuccess, onError) {
+        Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+    };
 
-    function Api() {
-        this.discovery = false;
+    this.main = function (params, onComplete) {
+        onComplete([]);
+    };
+}
 
-        this.list = function (params, onComplete, onError) {
-            const cat = CATEGORIES[params.url];
-            if (!cat) return onError();
+Lampa.Api.sources[SOURCE_NAME] = new Api();
 
-            Lampa.Loader.show();
+// ===== UI =====
+Lampa.Component.add('v10_max_menu', {
+    render: function () {
 
-            fetch(GS_URL + '?sheet=' + encodeURIComponent(cat.sheet))
-                .then(r => r.json())
-                .then(json => {
-                    const items = (json.results || []).map(normalize);
+        let html = '<div class="selector-list">';
 
-                    Lampa.Loader.hide();
+        Object.keys(CATEGORIES).forEach(key => {
+            html += `<div class="selector-item" data-key="${key}">${CATEGORIES[key]}</div>`;
+        });
 
-                    onComplete({
-                        results: items,
-                        page: 1,
-                        total_pages: 1
-                    });
-                })
-                .catch(err => {
-                    Lampa.Loader.hide();
-                    Lampa.Notification.show('Ошибка API');
-                    onError(err);
-                });
-        };
+        html += '</div>';
 
-        this.full = function (params, onSuccess, onError) {
-            params.method = params.card.type;
-            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
-        };
-    }
+        this.html(html);
 
-    Lampa.Api.sources[SOURCE_NAME] = new Api();
+        this.find('.selector-item').on('click', (e) => {
+            let key = $(e.currentTarget).data('key');
 
-    Lampa.Component.add('v10_ultra', {
-        render: function () {
-            let html = '<div class="selector-list">';
-
-            Object.keys(CATEGORIES).forEach(key => {
-                html += `<div class="selector-item" data-key="${key}">${CATEGORIES[key].title}</div>`;
-            });
-
-            html += '</div>';
-            this.html(html);
-
-            this.find('.selector-item').on('click', (e) => {
-                const key = $(e.currentTarget).data('key');
-
-                Lampa.Activity.push({
-                    title: CATEGORIES[key].title,
-                    component: 'category',
-                    source: SOURCE_NAME,
-                    url: key
-                });
-            });
-        }
-    });
-
-    function start() {
-        if ($('.menu__item[data-action="v10_ultra"]').length) return;
-
-        const item = $(`
-            <li data-action="v10_ultra" class="menu__item selector">
-                <div class="menu__ico">${ICON}</div>
-                <div class="menu__text">${PLUGIN_NAME}</div>
-            </li>
-        `);
-
-        $('.menu .menu__list').eq(0).append(item);
-
-        item.on('hover:enter', () => {
             Lampa.Activity.push({
-                title: PLUGIN_NAME,
-                component: 'v10_ultra'
+                title: CATEGORIES[key],
+                component: 'category',
+                source: SOURCE_NAME,
+                url: key,
+                page: 1
             });
         });
     }
+});
 
-    if (window.appready) start();
-    else {
-        Lampa.Listener.follow('app', e => {
-            if (e.type === 'ready') start();
+// ===== MENU =====
+function start() {
+
+    if (window.v10_max) return;
+    window.v10_max = true;
+
+    const menu = $(`
+        <li class="menu__item selector" data-action="v10_max">
+            <div class="menu__text">${PLUGIN_NAME}</div>
+        </li>
+    `);
+
+    $('.menu .menu__list').append(menu);
+
+    menu.on('hover:enter', () => {
+        Lampa.Activity.push({
+            title: PLUGIN_NAME,
+            component: 'v10_max_menu'
         });
-    }
+    });
+}
+
+if (window.appready) start();
+else Lampa.Listener.follow('app', e => e.type === 'ready' && start());
 
 })();
