@@ -1,153 +1,116 @@
-(function() {
+/*
+=====================================================
+📺 LAMPA PLUGIN: V10 v4 PRO (Optimized + Cache + UI)
+=====================================================
+*/
+
+(function () {
     'use strict';
 
-    const API_URL = 'https://script.google.com/macros/s/AKfycbxEh9L6lmVtOAJsDH4N34bzvc2AbFJcosvY6E1SZ1Wc5Dozi4pN_-4480LWUvAtwehe/exec'; // ← ЗАМЕНИ НА СВОЙ /exec URL
+    const API_URL = 'https://script.google.com/macros/s/AKfycbyN7CBdDLc8H4zsAdOO6dGI4eaUlw16V1s74Cdvj8RZgL2jyfDMWC6kepjulDUcnYNW/exec';
 
-    var network = new Lampa.Reguest(); // webOS-совместимо
+    // ⏱ Кеш (5 минут)
+    const CACHE_TIME = 5 * 60 * 1000;
+    let cache = {};
 
-    function findField(row, keys) {
-        for (let k of keys) {
-            if (row[k] !== undefined) return row[k];
+    function fetchJSON(url, callback) {
+        const now = Date.now();
+
+        if (cache[url] && (now - cache[url].time < CACHE_TIME)) {
+            return callback(cache[url].data);
         }
-        return '';
+
+        fetch(url)
+            .then(res => res.json())
+            .then(data => {
+                cache[url] = { data: data, time: now };
+                callback(data);
+            })
+            .catch(() => callback(null));
     }
 
-    // Добавляем кнопку в левое меню (автоматически при запуске плагина)
-    function addToMenu() {
+    function createCard(item) {
+        return {
+            id: item.id,
+            type: item.type || 'movie',
+            title: item.title,
+            name: item.name,
+            original_title: item.original_title || item.title,
+            poster: item.poster_path || '',
+            backdrop: item.backdrop_path || item.poster_path || '',
+            vote_average: item.vote_average || 0
+        };
+    }
+
+    function openCategory(sheetName) {
+        const url = API_URL + '?sheet=' + encodeURIComponent(sheetName);
+
         Lampa.Activity.push({
-            title: 'V10 v3',
-            component: 'v10_v3',
-            page: 1
+            url: url,
+            title: sheetName,
+            component: 'category_full',
+            page: 1,
+            source: 'v10_pro',
+            cardClass: 'card--collection',
+
+            onMore: function (data, resolve) {
+                resolve([]);
+            },
+
+            onLoad: function (data, resolve) {
+                fetchJSON(url, function (json) {
+                    if (!json || !json.results) return resolve([]);
+
+                    let items = json.results.map(createCard);
+
+                    // ⭐ сортировка по рейтингу
+                    items.sort((a, b) => b.vote_average - a.vote_average);
+
+                    resolve(items);
+                });
+            }
         });
-        Lampa.Noty.show('V10 v3 добавлен в левое меню');
     }
 
-    // Основной компонент
-    Lampa.Component.add('v10_v3', {
-        init: function() {
-            this.activity = Lampa.Activity.active();
-            this.render();
-        },
+    function loadCategories(callback) {
+        fetchJSON(API_URL, function (json) {
+            if (!json || !json.sheets) return callback([]);
 
-        render: function() {
-            var _this = this;
-            var html = Lampa.Template.get('cub_block', { title: 'V10 v3 — Категории' });
-            this.activity.body.html(html);
+            // ❌ фильтр мусорных листов
+            const clean = json.sheets.filter(name =>
+                name &&
+                !name.startsWith('_') &&
+                !name.toLowerCase().includes('tmp')
+            );
 
-            // Загружаем категории
-            this.loadCategories();
-            return this.activity;
-        },
+            callback(clean);
+        });
+    }
 
-        loadCategories: function() {
-            var _this = this;
-            var cached = Lampa.Storage.get('v10_categories', false);
+    function initPlugin() {
+        loadCategories(function (categories) {
+            if (!categories.length) return;
 
-            if (cached && (Date.now() - cached.time < 3600000)) {
-                this.showCategories(cached.data);
-                return;
-            }
-
-            network.silent(API_URL + '?action=categories', function(data) {
-                if (data.success) {
-                    Lampa.Storage.set('v10_categories', { time: Date.now(), data: data.categories });
-                    _this.showCategories(data.categories);
-                } else {
-                    Lampa.Noty.show('Ошибка получения категорий');
+            const items = categories.map(name => ({
+                title: name,
+                action: function () {
+                    openCategory(name);
                 }
-            }, function() {
-                Lampa.Noty.show('Не удалось загрузить категории (проверьте интернет)');
+            }));
+
+            Lampa.Menu.add({
+                title: 'V10 v4',
+                icon: 'movie_filter',
+                items: items
             });
-        },
+        });
+    }
 
-        showCategories: function(categories) {
-            var _this = this;
-            var scroll = Lampa.Scroll.create();
-
-            categories.forEach(function(cat) {
-                var card = Lampa.Card.create({
-                    title: cat,
-                    poster: '', // можно добавить эмодзи или иконку
-                    background: ''
-                });
-
-                card.on('select', function() {
-                    _this.loadMovies(cat);
-                });
-
-                scroll.append(card);
-            });
-
-            this.activity.body.append(scroll.render());
-            scroll.toggle();
-        },
-
-        loadMovies: function(sheetName) {
-            var _this = this;
-            Lampa.Loading.start();
-
-            var cached = Lampa.Storage.get('v10_data_' + sheetName, false);
-            if (cached && (Date.now() - cached.time < 3600000)) {
-                this.showMovies(cached.data);
-                Lampa.Loading.stop();
-                return;
-            }
-
-            network.silent(API_URL + '?action=data&sheet=' + encodeURIComponent(sheetName), function(resp) {
-                if (resp.success) {
-                    Lampa.Storage.set('v10_data_' + sheetName, { time: Date.now(), data: resp.data });
-                    _this.showMovies(resp.data);
-                } else {
-                    Lampa.Noty.show(resp.error || 'Ошибка данных');
-                }
-                Lampa.Loading.stop();
-            }, function() {
-                Lampa.Noty.show('Ошибка загрузки фильмов');
-                Lampa.Loading.stop();
-            });
-        },
-
-        showMovies: function(movies) {
-            var _this = this;
-            var scroll = Lampa.Scroll.create();
-
-            movies.forEach(function(row) {
-                var title = findField(row, ['Название', 'title', 'Name']) || 'Без названия';
-                var poster = findField(row, ['Постер', 'poster', 'image']) || '';
-                var playerUrl = findField(row, ['Ссылка', 'url', 'player', 'link']) || '';
-
-                var card = Lampa.Card.create({
-                    title: title,
-                    poster: poster,
-                    background: findField(row, ['Фон', 'background']) || poster,
-                    description: findField(row, ['Описание', 'description']) || '',
-                    year: findField(row, ['Год', 'year']) || ''
-                });
-
-                card.on('select', function() {
-                    if (playerUrl) {
-                        Lampa.Player.open({
-                            url: playerUrl,
-                            title: title,
-                            poster: poster
-                        });
-                    } else {
-                        Lampa.Noty.show('Ссылка на плеер отсутствует');
-                    }
-                });
-
-                scroll.append(card);
-            });
-
-            this.activity.body.empty().append(scroll.render());
-            scroll.toggle();
-        }
-    });
-
-    // Автозапуск при установке плагина
-    Lampa.onReady(function() {
-        addToMenu();
-    });
-
-    console.log('✅ Плагин V10 v3 загружен');
+    // 🚀 запуск
+    if (window.appready) initPlugin();
+    else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') initPlugin();
+        });
+    }
 })();
