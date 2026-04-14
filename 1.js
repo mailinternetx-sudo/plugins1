@@ -6,7 +6,6 @@
 
     const GS_URL = 'https://script.google.com/macros/s/AKfycbyyl-D2v4BIqJtc6dg2HDG7ilZwc5JZrCV5r4oHZtc4hJiuMN08oCTRYp7lkySwTDCB/exec';
     const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
-
     const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 
     const ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4z"/></svg>';
@@ -14,14 +13,7 @@
     const CATEGORIES = {
         top24: { title: 'Топ 24ч', sheet: 'Топ 24ч', type: 'movie' },
         films: { title: 'Фильмы', sheet: 'Зарубежные фильмы', type: 'movie' },
-        rusfilms: { title: 'Наши фильмы', sheet: 'Наши фильмы', type: 'movie' },
-        series: { title: 'Сериалы', sheet: 'Зарубежные сериалы', type: 'tv' },
-        russeries: { title: 'Наши сериалы', sheet: 'Наши сериалы', type: 'tv' }
-    };
-
-    const cache = {
-        ids: {},
-        tmdb: {}
+        series: { title: 'Сериалы', sheet: 'Зарубежные сериалы', type: 'tv' }
     };
 
     function img(url) {
@@ -30,48 +22,32 @@
         return TMDB_IMG + url;
     }
 
-    function normalize(item, type) {
-        return {
-            id: item.id,
-            title: item.title || item.name,
-            original_title: item.original_title || item.original_name,
-            poster_path: img(item.poster_path),
-            backdrop_path: img(item.backdrop_path),
-            overview: item.overview || '',
-            vote_average: item.vote_average || 0,
-            release_date: item.release_date || item.first_air_date,
-            type: type
-        };
-    }
-
     async function getIds(sheet) {
-        if (cache.ids[sheet]) return cache.ids[sheet];
-
         const res = await fetch(GS_URL + '?sheet=' + encodeURIComponent(sheet));
         const json = await res.json();
-
-        const ids = json.results || [];
-        cache.ids[sheet] = ids;
-
-        return ids;
+        return json.results || [];
     }
 
     async function getTMDB(id, type) {
-        const key = id + type;
-        if (cache.tmdb[key]) return cache.tmdb[key];
-
         const url = `https://api.themoviedb.org/3/${type}/${id}?api_key=${TMDB_API_KEY}&language=ru-RU`;
 
         try {
             const res = await fetch(url);
-            const json = await res.json();
+            const j = await res.json();
 
-            if (!json || json.status_code) return null;
+            if (!j || j.status_code) return null;
 
-            const data = normalize(json, type);
-
-            cache.tmdb[key] = data;
-            return data;
+            return {
+                id: j.id,
+                title: j.title || j.name,
+                original_title: j.original_title || j.original_name,
+                poster_path: img(j.poster_path),
+                backdrop_path: img(j.backdrop_path),
+                overview: j.overview,
+                vote_average: j.vote_average,
+                release_date: j.release_date || j.first_air_date,
+                type: type
+            };
         } catch (e) {
             return null;
         }
@@ -88,17 +64,19 @@
                 Lampa.Loader.show();
 
                 const ids = await getIds(cat.sheet);
+                const results = [];
 
-                const promises = ids.map(id => getTMDB(id, cat.type));
-                const results = (await Promise.all(promises)).filter(Boolean);
+                for (let id of ids) {
+                    const item = await getTMDB(id, cat.type);
+                    if (item) results.push(item);
+                }
 
                 Lampa.Loader.hide();
 
                 onComplete({
                     results: results,
                     page: 1,
-                    total_pages: 1,
-                    total_results: results.length
+                    total_pages: 1
                 });
 
             } catch (e) {
@@ -108,7 +86,7 @@
         };
 
         this.full = function (params, onSuccess, onError) {
-            params.method = params.card.type || 'movie';
+            params.method = params.card.type;
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
     }
@@ -116,22 +94,7 @@
     const api = new Api();
     Lampa.Api.sources[SOURCE_NAME] = api;
 
-    function addMenu() {
-        const el = $(`<li class="menu__item selector">
-            <div class="menu__ico">${ICON}</div>
-            <div class="menu__text">${PLUGIN_NAME}</div>
-        </li>`);
-
-        $('.menu .menu__list').append(el);
-
-        el.on('hover:enter', () => {
-            Lampa.Activity.push({
-                title: PLUGIN_NAME,
-                component: 'v10_max'
-            });
-        });
-    }
-
+    // ✅ КОМПОНЕНТ
     Lampa.Component.add('v10_max', {
         render: function () {
             let html = '<div class="selector-list">';
@@ -150,17 +113,46 @@
                     title: CATEGORIES[key].title,
                     component: 'category',
                     source: SOURCE_NAME,
-                    url: key
+                    url: key,
+                    page: 1
                 });
             });
         }
     });
 
+    // ✅ МЕНЮ (ФИКС)
+    function addMenu() {
+        if ($('.menu__item[data-action="v10_max"]').length) return;
+
+        const item = $(`
+            <li data-action="v10_max" class="menu__item selector">
+                <div class="menu__ico">${ICON}</div>
+                <div class="menu__text">${PLUGIN_NAME}</div>
+            </li>
+        `);
+
+        $('.menu .menu__list').eq(0).append(item);
+
+        item.on('hover:enter', function () {
+            Lampa.Activity.push({
+                title: PLUGIN_NAME,
+                component: 'v10_max'
+            });
+        });
+    }
+
     function start() {
+        if (window.v10_max_started) return;
+        window.v10_max_started = true;
+
         addMenu();
     }
 
     if (window.appready) start();
-    else Lampa.Listener.follow('app', e => e.type === 'ready' && start());
+    else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') start();
+        });
+    }
 
 })();
