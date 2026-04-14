@@ -2,7 +2,7 @@
     'use strict';
 
     var SOURCE_NAME = 'V10 v2';
-    var API_URL = 'https://script.google.com/macros/s/AKfycbyyl-D2v4BIqJtc6dg2HDG7ilZwc5JZrCV5r4oHZtc4hJiuMN08oCTRYp7lkySwTDCB/exec';
+    var API_URL = 'https://script.google.com/macros/s/AKfycby3-5HJ3tfMFlfXkya88K-0CScymTM-dlixenEG2ZnEV5tKafNrtlr2-rUz6QNpfOvR/exec';
 
     var SHEETS = [
         'Топ 24ч',
