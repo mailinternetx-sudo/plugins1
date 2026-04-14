@@ -1,118 +1,119 @@
 (function () {
     'use strict';
 
-    var SOURCE_NAME = 'V10 v2';
-    var API_URL = 'https://script.google.com/macros/s/AKfycbxyaaNuijcKm82446FRog5td-fLk7I9znDnwe5tndCLognWr-JV4osxWZ9R6LW7oE2_/exec';
+    const PLUGIN_NAME = 'V10 ULTRA';
+    const SOURCE_NAME = 'v10_ultra';
 
-    function V10Api() {
-        var network = new Lampa.Reguest();
+    const GS_URL = 'https://script.google.com/macros/s/AKfycbxyaaNuijcKm82446FRog5td-fLk7I9znDnwe5tndCLognWr-JV4osxWZ9R6LW7oE2_/exec';
 
-        // 🔥 получить список листов (категорий)
-        this.getSheets = function (onSuccess, onError) {
-            network.silent(API_URL + '?list=sheets', function (json) {
-                onSuccess(json.sheets || []);
-            }, onError);
+    const ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4z"/></svg>';
+
+    const CATEGORIES = {
+        top24: { title: 'Топ 24ч', sheet: 'Топ 24ч' },
+        films: { title: 'Фильмы', sheet: 'Зарубежные фильмы' },
+        rusfilms: { title: 'Наши фильмы', sheet: 'Наши фильмы' },
+        series: { title: 'Сериалы', sheet: 'Зарубежные сериалы' },
+        russeries: { title: 'Наши сериалы', sheet: 'Наши сериалы' }
+    };
+
+    function normalize(item) {
+        return {
+            id: item.id,
+            title: item.title,
+            original_title: item.title,
+            poster_path: item.poster_path,
+            backdrop_path: item.poster_path,
+            overview: '',
+            vote_average: item.vote_average,
+            type: item.type
         };
+    }
 
-        // 🎬 получить фильмы
-        this.getList = function (sheet, onSuccess, onError) {
-            network.silent(API_URL + '?sheet=' + encodeURIComponent(sheet), function (json) {
+    function Api() {
+        this.discovery = false;
 
-                var results = (json.results || []).map(function (item) {
-                    return {
-                        id: item.id,
-                        type: item.type || 'movie',
-                        title: item.title,
-                        name: item.title,
-                        poster_path: item.poster_path,
-                        backdrop_path: item.poster_path,
-                        vote_average: item.vote_average || 0,
-                        source: SOURCE_NAME
-                    };
-                });
+        this.list = function (params, onComplete, onError) {
+            const cat = CATEGORIES[params.url];
+            if (!cat) return onError();
 
-                onSuccess({
-                    results: results,
-                    page: 1,
-                    total_pages: 1
-                });
+            Lampa.Loader.show();
 
-            }, onError);
-        };
+            fetch(GS_URL + '?sheet=' + encodeURIComponent(cat.sheet))
+                .then(r => r.json())
+                .then(json => {
+                    const items = (json.results || []).map(normalize);
 
-        // 📂 категории (динамика)
-        this.category = function (params, onSuccess, onError) {
-            var self = this;
+                    Lampa.Loader.hide();
 
-            this.getSheets(function (sheets) {
-
-                var parts = [];
-
-                sheets.forEach(function (sheet) {
-                    parts.push(function (callback) {
-                        self.getList(sheet, function (data) {
-                            callback({
-                                title: sheet,
-                                results: data.results,
-                                url: sheet,
-                                source: SOURCE_NAME
-                            });
-                        }, function () {
-                            callback({ error: true });
-                        });
+                    onComplete({
+                        results: items,
+                        page: 1,
+                        total_pages: 1
                     });
+                })
+                .catch(err => {
+                    Lampa.Loader.hide();
+                    Lampa.Notification.show('Ошибка API');
+                    onError(err);
                 });
-
-                Lampa.Api.partNext(parts, 5, onSuccess, onError);
-
-            }, onError);
         };
 
-        // 📄 full (карточка)
         this.full = function (params, onSuccess, onError) {
-            params.method = params.card.type || 'movie';
+            params.method = params.card.type;
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
-
-        // 📜 list (если открыта категория)
-        this.list = function (params, onSuccess, onError) {
-            this.getList(params.url, onSuccess, onError);
-        };
     }
 
-    function startPlugin() {
-        if (window.v12_plugin) return;
-        window.v12_plugin = true;
+    Lampa.Api.sources[SOURCE_NAME] = new Api();
 
-        var api = new V10Api();
+    Lampa.Component.add('v10_ultra', {
+        render: function () {
+            let html = '<div class="selector-list">';
 
-        Lampa.Api.sources.v10v2 = api;
+            Object.keys(CATEGORIES).forEach(key => {
+                html += `<div class="selector-item" data-key="${key}">${CATEGORIES[key].title}</div>`;
+            });
 
-        Object.defineProperty(Lampa.Api.sources, SOURCE_NAME, {
-            get: function () {
-                return api;
-            }
-        });
+            html += '</div>';
+            this.html(html);
 
-        // меню
-        var menuItem = $('<li class="menu__item selector"><div class="menu__text">' + SOURCE_NAME + '</div></li>');
+            this.find('.selector-item').on('click', (e) => {
+                const key = $(e.currentTarget).data('key');
 
-        menuItem.on('hover:enter', function () {
+                Lampa.Activity.push({
+                    title: CATEGORIES[key].title,
+                    component: 'category',
+                    source: SOURCE_NAME,
+                    url: key
+                });
+            });
+        }
+    });
+
+    function start() {
+        if ($('.menu__item[data-action="v10_ultra"]').length) return;
+
+        const item = $(`
+            <li data-action="v10_ultra" class="menu__item selector">
+                <div class="menu__ico">${ICON}</div>
+                <div class="menu__text">${PLUGIN_NAME}</div>
+            </li>
+        `);
+
+        $('.menu .menu__list').eq(0).append(item);
+
+        item.on('hover:enter', () => {
             Lampa.Activity.push({
-                title: SOURCE_NAME,
-                component: 'category',
-                source: SOURCE_NAME
+                title: PLUGIN_NAME,
+                component: 'v10_ultra'
             });
         });
-
-        $('.menu .menu__list').eq(0).append(menuItem);
     }
 
-    if (window.appready) {
-        startPlugin();
-    } else {
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') startPlugin();
+    if (window.appready) start();
+    else {
+        Lampa.Listener.follow('app', e => {
+            if (e.type === 'ready') start();
         });
     }
 
