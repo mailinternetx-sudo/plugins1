@@ -1,133 +1,89 @@
 (function () {
     'use strict';
 
-    var API = 'https://script.google.com/macros/s/AKfycbzt3knVR1LoUPS8LqNlTAkoFquNFC6LzIGwYySdSQ3R_RoytZGR7OqawB40LtcdLuk/exec';
+    const PLUGIN = 'V10 MAX';
+    const SOURCE = 'v10_max';
 
-    var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
-    var CACHE = {};
+    const GS_URL = 'https://script.google.com/macros/s/AKfycbzyCyPXo04klnemwUL-t4erleYG2rW3KrEEtdD6NUe_jtiiYbrhg0Y5bs7xVwtbERgs/exec';
 
-    // 🔥 список листов (жёстко, как в GAS)
-    var SHEETS = [
-        'Топ 24ч',
-        'Зарубежные фильмы',
-        'Наши фильмы',
-        'Зарубежные сериалы',
-        'Наши сериалы',
-        'Телевизор'
-    ];
+    const CATEGORIES = {
+        top: { title: '🔥 Топ 24ч', sheet: 'Топ 24ч' },
+        movies: { title: '🎬 Фильмы', sheet: 'Зарубежные фильмы' },
+        serials: { title: '📺 Сериалы', sheet: 'Зарубежные сериалы' }
+    };
 
-    function getTMDB(id, callback) {
+    function Api() {
 
-        if (CACHE[id]) return callback(CACHE[id]);
+        this.list = function (params, onComplete, onError) {
+            const cat = CATEGORIES[params.url];
 
-        Lampa.Api.get('movie/' + id, {}, function (data) {
-            if (!data || !data.id) {
-                // пробуем как сериал
-                Lampa.Api.get('tv/' + id, {}, function (tv) {
-                    if (tv && tv.id) {
-                        CACHE[id] = format(tv, 'tv');
-                        callback(CACHE[id]);
-                    } else callback(null);
-                });
-            } else {
-                CACHE[id] = format(data, 'movie');
-                callback(CACHE[id]);
-            }
-        });
-    }
+            Lampa.Loader.show();
 
-    function format(data, type) {
-        return {
-            id: data.id,
-            type: type,
-            title: data.title || data.name,
-            poster_path: data.poster_path ? TMDB_IMG + data.poster_path : '',
-            backdrop_path: data.backdrop_path,
-            vote_average: data.vote_average || 0,
-            overview: data.overview || ''
-        };
-    }
+            fetch(GS_URL + '?sheet=' + encodeURIComponent(cat.sheet))
+                .then(r => r.json())
+                .then(json => {
+                    Lampa.Loader.hide();
 
-    function loadSheet(sheet, callback) {
-        Lampa.Reguest.get(API + '?sheet=' + encodeURIComponent(sheet), function (data) {
-
-            var json = JSON.parse(data);
-            var ids = json.results || [];
-
-            var results = [];
-            var loaded = 0;
-
-            if (!ids.length) return callback([]);
-
-            ids.forEach(function (id, index) {
-
-                getTMDB(id, function (card) {
-                    loaded++;
-
-                    if (card) results.push(card);
-
-                    if (loaded === ids.length) {
-                        callback(results);
-                    }
-                });
-
-            });
-
-        });
-    }
-
-    function Source() {
-
-        this.category = function (params, onSuccess) {
-
-            var parts = [];
-
-            SHEETS.forEach(function (sheet) {
-
-                parts.push(function (callback) {
-
-                    loadSheet(sheet, function (results) {
-
-                        callback({
-                            title: sheet,
-                            results: results,
-                            source: 'V14'
-                        });
-
+                    onComplete({
+                        results: json.results,
+                        page: 1,
+                        total_pages: 1
                     });
-
+                })
+                .catch(err => {
+                    Lampa.Loader.hide();
+                    onError(err);
                 });
+        };
 
-            });
-
-            Lampa.Api.partNext(parts, 3, onSuccess);
+        this.full = function (params, onSuccess, onError) {
+            // 🔥 используем стандарт TMDB full
+            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
     }
 
-    var source = new Source();
+    Lampa.Api.sources[SOURCE] = new Api();
 
-    Lampa.Api.sources.V14 = source;
+    Lampa.Component.add('v10_max', {
+        template: 'categories',
+        data: function () {
+            return {
+                categories: Object.keys(CATEGORIES).map(k => ({
+                    key: k,
+                    title: CATEGORIES[k].title
+                }))
+            };
+        },
+        render: function (data) {
+            let html = '<div class="selector-list">';
+            data.categories.forEach(c => {
+                html += `<div class="selector-item" data-key="${c.key}">${c.title}</div>`;
+            });
+            html += '</div>';
 
-    Lampa.Component.add('V14', {
-        name: 'V14 PRO',
-        icon: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>',
-        onCreate: function () {
+            this.dom.html(html);
 
-            var activity = this.activity;
+            this.dom.find('.selector-item').on('click', (e) => {
+                const key = $(e.currentTarget).data('key');
 
-            activity.loader(true);
-
-            source.category({}, function (data) {
-                activity.loader(false);
-                activity.append(data);
+                Lampa.Activity.push({
+                    title: CATEGORIES[key].title,
+                    component: 'category',
+                    source: SOURCE,
+                    url: key
+                });
             });
         }
     });
 
-    Lampa.Menu.add({
-        name: 'V14 PRO',
-        component: 'V14',
-        icon: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
-    });
+    function start() {
+        Lampa.Activity.push({
+            title: PLUGIN,
+            component: 'v10_max'
+        });
+    }
+
+    if (window.appready) start();
+    else Lampa.Listener.follow('app', e => e.type === 'ready' && start());
 
 })();
