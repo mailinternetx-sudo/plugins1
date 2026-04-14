@@ -1,28 +1,30 @@
 (function () {
 'use strict';
 
-const SOURCE_NAME = 'v10_max';
-const PLUGIN_NAME = 'V10 MAX';
-const GS_URL = 'https://script.google.com/macros/s/AKfycbx9HK-M8HAcuw8k5Qbr-1kz8StaqHgopROy9_x3cH9R3UwmkGkTQw0HF9tglopHBpfV/exec';
+const SOURCE_NAME = 'v10_v2';
+const PLUGIN_NAME = 'V10 v2';
+
+const GS_URL = 'https://script.google.com/macros/s/AKfycbyh1aLms2UcDjImg0Y3F_vDLqQsCiOQpbCWHigXUfFbxwgorldX8LnG-nW5yCISn7TO/exec';
 
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 
-const CATEGORIES = {
-    top24: 'Топ 24ч',
-    movies: 'Зарубежные фильмы',
-    rus_movies: 'Наши фильмы',
-    series: 'Зарубежные сериалы',
-    rus_series: 'Наши сериалы',
-    tv: 'Телевизор'
-};
+// ⚠️ ЛИСТЫ = КАТЕГОРИИ (можешь менять под свою таблицу)
+const SHEETS = [
+    'Топ 24ч',
+    'Зарубежные фильмы',
+    'Наши фильмы',
+    'Зарубежные сериалы',
+    'Наши сериалы',
+    'Телевизор'
+];
 
 // ===== API =====
-function Api() {
+function V10Api() {
 
     this.list = function (params, onComplete, onError) {
 
-        const sheet = CATEGORIES[params.url];
-        if (!sheet) return onError('no category');
+        let sheet = params.url;
+        if (!sheet) return onError('no sheet');
 
         Lampa.Loader.show();
 
@@ -34,8 +36,8 @@ function Api() {
 
                     let poster = item.poster_path || '';
 
-                    // если ссылка полная — оставляем
-                    if (poster.indexOf('http') === -1 && poster) {
+                    // нормализация постера
+                    if (poster && poster.indexOf('http') === -1) {
                         poster = TMDB_IMG + poster;
                     }
 
@@ -63,10 +65,10 @@ function Api() {
                 });
 
             })
-            .catch(e => {
+            .catch(err => {
                 Lampa.Loader.hide();
-                console.log(e);
-                onError(e);
+                console.error(err);
+                onError(err);
             });
     };
 
@@ -79,16 +81,17 @@ function Api() {
     };
 }
 
-Lampa.Api.sources[SOURCE_NAME] = new Api();
+// регистрация источника
+Lampa.Api.sources[SOURCE_NAME] = new V10Api();
 
-// ===== UI =====
-Lampa.Component.add('v10_max_menu', {
+// ===== КАТЕГОРИИ =====
+Lampa.Component.add('v10_v2_categories', {
     render: function () {
 
-        let html = '<div class="selector-list">';
+        let html = '<div class="selector-list" style="padding:20px;">';
 
-        Object.keys(CATEGORIES).forEach(key => {
-            html += `<div class="selector-item" data-key="${key}">${CATEGORIES[key]}</div>`;
+        SHEETS.forEach(sheet => {
+            html += `<div class="selector-item" data-sheet="${sheet}">${sheet}</div>`;
         });
 
         html += '</div>';
@@ -96,42 +99,50 @@ Lampa.Component.add('v10_max_menu', {
         this.html(html);
 
         this.find('.selector-item').on('click', (e) => {
-            let key = $(e.currentTarget).data('key');
+
+            let sheet = $(e.currentTarget).data('sheet');
 
             Lampa.Activity.push({
-                title: CATEGORIES[key],
+                title: sheet,
                 component: 'category',
                 source: SOURCE_NAME,
-                url: key,
+                url: sheet,
                 page: 1
             });
         });
     }
 });
 
-// ===== MENU =====
-function start() {
+// ===== МЕНЮ =====
+function startPlugin() {
 
-    if (window.v10_max) return;
-    window.v10_max = true;
+    if (window.v10_v2_ready) return;
+    window.v10_v2_ready = true;
 
     const menu = $(`
-        <li class="menu__item selector" data-action="v10_max">
+        <li class="menu__item selector" data-action="v10_v2">
+            <div class="menu__ico">🎬</div>
             <div class="menu__text">${PLUGIN_NAME}</div>
         </li>
     `);
 
-    $('.menu .menu__list').append(menu);
+    $('.menu .menu__list').eq(0).append(menu);
 
     menu.on('hover:enter', () => {
         Lampa.Activity.push({
             title: PLUGIN_NAME,
-            component: 'v10_max_menu'
+            component: 'v10_v2_categories'
         });
     });
 }
 
-if (window.appready) start();
-else Lampa.Listener.follow('app', e => e.type === 'ready' && start());
+// запуск
+if (window.appready) {
+    startPlugin();
+} else {
+    Lampa.Listener.follow('app', function (e) {
+        if (e.type === 'ready') startPlugin();
+    });
+}
 
 })();
