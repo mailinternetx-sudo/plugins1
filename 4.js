@@ -2,7 +2,7 @@
     'use strict';
 
     var SOURCE_NAME = 'V10 v2';
-    var API_URL = 'https://script.google.com/macros/s/AKfycbwL6S630vT_9tmB-Xmi4OvcQVsRPJaRdFZq6YdoqddLJwQBKFnVNWAo8JoQxCANiGA/exec';
+    var API_URL = 'https://script.google.com/macros/s/AKfycbz0HiFAxfexoNSc9EPI_Mb_tzrNtD03SOxPjvjxwNRrEyL3YbNADOVmIxmwMiaDg6cL/exec';
 
     function V10Api() {
         var network = new Lampa.Reguest();
