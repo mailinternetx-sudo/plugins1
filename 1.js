@@ -1,148 +1,109 @@
 (function () {
-'use strict';
+    'use strict';
 
-const SOURCE_NAME = 'v10_v2';
-const PLUGIN_NAME = 'V10 v2';
+    var SOURCE_NAME = 'V10 v2';
+    var API_URL = 'https://script.google.com/macros/s/AKfycbxildpf3OrmIbfLsP3F2Kg0SC2JgKoFf-4R6ZV7pjGP8td9KU-oA8hvH2DcYx-B77Fq/exec';
 
-const GS_URL = 'https://script.google.com/macros/s/AKfycbyh1aLms2UcDjImg0Y3F_vDLqQsCiOQpbCWHigXUfFbxwgorldX8LnG-nW5yCISn7TO/exec';
+    // ⚠️ ВАЖНО: категории вручную (как в GAS)
+    var SHEETS = [
+        'Топ 24ч',
+        'Зарубежные фильмы',
+        'Наши фильмы',
+        'Зарубежные сериалы',
+        'Наши сериалы',
+        'Телевизор'
+    ];
 
-const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
+    function Api() {
+        var network = new Lampa.Reguest();
 
-// ⚠️ ЛИСТЫ = КАТЕГОРИИ (можешь менять под свою таблицу)
-const SHEETS = [
-    'Топ 24ч',
-    'Зарубежные фильмы',
-    'Наши фильмы',
-    'Зарубежные сериалы',
-    'Наши сериалы',
-    'Телевизор'
-];
+        this.category = function (params, onSuccess) {
+            var parts = [];
 
-// ===== API =====
-function V10Api() {
+            SHEETS.forEach(function (sheet) {
+                parts.push(function (next) {
+                    loadSheet(sheet, next);
+                });
+            });
 
-    this.list = function (params, onComplete, onError) {
+            Lampa.Api.partNext(parts, 3, function (data) {
+                onSuccess(data);
+            });
+        };
 
-        let sheet = params.url;
-        if (!sheet) return onError('no sheet');
+        function loadSheet(sheet, next) {
+            var url = API_URL + '?sheet=' + encodeURIComponent(sheet);
 
-        Lampa.Loader.show();
+            network.silent(url, function (json) {
 
-        fetch(GS_URL + '?sheet=' + encodeURIComponent(sheet))
-            .then(r => r.json())
-            .then(json => {
+                if (!json || json.error) {
+                    next({ title: sheet, results: [] });
+                    return;
+                }
 
-                let results = (json.results || []).map(item => {
-
-                    let poster = item.poster_path || '';
-
-                    // нормализация постера
-                    if (poster && poster.indexOf('http') === -1) {
-                        poster = TMDB_IMG + poster;
-                    }
-
+                var results = (json.results || []).map(function (item) {
                     return {
                         id: item.id,
                         title: item.title,
-                        name: item.name,
-                        original_title: item.original_title,
-                        poster_path: poster,
-                        backdrop_path: poster,
-                        overview: item.overview || '',
+                        name: item.title,
+                        poster_path: normalizeImg(item.poster_path),
+                        backdrop_path: normalizeImg(item.poster_path),
                         vote_average: item.vote_average || 0,
-                        first_air_date: item.media_type === 'tv' ? '2020' : null,
-                        release_date: item.media_type === 'movie' ? '2020' : null
+                        type: item.type || 'movie',
+                        source: SOURCE_NAME
                     };
                 });
 
-                Lampa.Loader.hide();
-
-                onComplete({
+                next({
+                    title: sheet,
                     results: results,
                     page: 1,
-                    total_pages: 1,
-                    total_results: results.length
+                    total_pages: 1
                 });
 
-            })
-            .catch(err => {
-                Lampa.Loader.hide();
-                console.error(err);
-                onError(err);
+            }, function () {
+                next({ title: sheet, results: [] });
             });
-    };
+        }
 
-    this.full = function (params, onSuccess, onError) {
-        Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
-    };
+        this.full = function (params, onSuccess, onError) {
+            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+        };
+    }
 
-    this.main = function (params, onComplete) {
-        onComplete([]);
-    };
-}
+    function normalizeImg(url) {
+        if (!url) return '';
+        if (url.indexOf('http') === 0) return url;
+        return 'https://image.tmdb.org/t/p/w500' + url;
+    }
 
-// регистрация источника
-Lampa.Api.sources[SOURCE_NAME] = new V10Api();
+    function start() {
+        if (window.v10v2_ready) return;
+        window.v10v2_ready = true;
 
-// ===== КАТЕГОРИИ =====
-Lampa.Component.add('v10_v2_categories', {
-    render: function () {
+        var api = new Api();
+        Lampa.Api.sources[SOURCE_NAME] = api;
 
-        let html = '<div class="selector-list" style="padding:20px;">';
+        // кнопка в меню
+        var button = $('<li class="menu__item selector"><div class="menu__text">' + SOURCE_NAME + '</div></li>');
 
-        SHEETS.forEach(sheet => {
-            html += `<div class="selector-item" data-sheet="${sheet}">${sheet}</div>`;
-        });
-
-        html += '</div>';
-
-        this.html(html);
-
-        this.find('.selector-item').on('click', (e) => {
-
-            let sheet = $(e.currentTarget).data('sheet');
-
+        button.on('hover:enter', function () {
             Lampa.Activity.push({
-                title: sheet,
                 component: 'category',
                 source: SOURCE_NAME,
-                url: sheet,
+                title: SOURCE_NAME,
                 page: 1
             });
         });
+
+        $('.menu .menu__list').eq(0).append(button);
     }
-});
 
-// ===== МЕНЮ =====
-function startPlugin() {
-
-    if (window.v10_v2_ready) return;
-    window.v10_v2_ready = true;
-
-    const menu = $(`
-        <li class="menu__item selector" data-action="v10_v2">
-            <div class="menu__ico">🎬</div>
-            <div class="menu__text">${PLUGIN_NAME}</div>
-        </li>
-    `);
-
-    $('.menu .menu__list').eq(0).append(menu);
-
-    menu.on('hover:enter', () => {
-        Lampa.Activity.push({
-            title: PLUGIN_NAME,
-            component: 'v10_v2_categories'
+    if (window.appready) start();
+    else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') start();
         });
-    });
-}
-
-// запуск
-if (window.appready) {
-    startPlugin();
-} else {
-    Lampa.Listener.follow('app', function (e) {
-        if (e.type === 'ready') startPlugin();
-    });
-}
+    }
 
 })();
