@@ -2,7 +2,7 @@
     'use strict';
 
     var SOURCE_NAME = 'FIX FINAL';
-    var API_URL = 'https://script.google.com/macros/s/AKfycbz_5VESAAFFcrD8BB8DJnj1Q-NBdLFLUbphP5SRb07KQ3RHZT_zoeBj8MYZVdEneHC-/exec'; // вставь свой
+    var API_URL = 'https://script.google.com/macros/s/AKfycbyfaTd43bLjpj0fgICwORZb1o-ibPhZqNN7Xpc87Hy1YDmHIlh0-Xq5tNwmnnmkwmLF/exec'; // вставь свой
 
     var SHEETS = [
         'Топ 24ч',
