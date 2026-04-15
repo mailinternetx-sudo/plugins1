@@ -1,8 +1,8 @@
 (function () {
     'use strict';
 
-    var SOURCE_NAME = 'V10 v2';
-    var API_URL = 'https://script.google.com/macros/s/AKfycbxl5XoJ8p3DgX3TWrAFHNAJUa4kC629pf3vXwbsbpEgoXqCcwsyX52A3xSzvELqPFL2/exec';
+    var SOURCE_NAME = 'V10 v3';
+    var API_URL = 'https://script.google.com/macros/s/AKfycbzx7cbTv_4bn1qarfXmTRfOhaBFXK5P4GAkbJC50OAaX0DhB6VtbQV9eil6uRSB9Pbu/exec';
 
     var SHEETS = [
         'Топ 24ч',
