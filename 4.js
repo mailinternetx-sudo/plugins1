@@ -1,10 +1,11 @@
 (function () {
     'use strict';
 
+    const SOURCE_NAME = 'Rutor Pro';
     const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
     const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    const categories = [
+    const CATEGORIES = [
         "Топ 24ч",
         "Зарубежные фильмы",
         "Наши фильмы",
@@ -13,39 +14,16 @@
         "Телевизор"
     ];
 
+    let cache = {};
     let queue = [];
     let active = 0;
     const MAX = 5;
-
-    let cache = {};
-
-    // ---------------- CACHE ----------------
-    function getCache(key) {
-        if (cache[key]) return cache[key];
-
-        let local = localStorage.getItem(key);
-        if (!local) return null;
-
-        let data = JSON.parse(local);
-        if (Date.now() - data.time > 1000 * 60 * 60 * 6) return null;
-
-        return data.value;
-    }
-
-    function setCache(key, value) {
-        cache[key] = value;
-
-        localStorage.setItem(key, JSON.stringify({
-            time: Date.now(),
-            value
-        }));
-    }
 
     // ---------------- QUEUE ----------------
     function runQueue() {
         if (active >= MAX || !queue.length) return;
 
-        const job = queue.shift();
+        let job = queue.shift();
         active++;
 
         job(() => {
@@ -61,6 +39,31 @@
         runQueue();
     }
 
+    // ---------------- CACHE ----------------
+    function getCache(key) {
+        if (cache[key]) return cache[key];
+
+        let raw = localStorage.getItem(key);
+        if (!raw) return null;
+
+        try {
+            let data = JSON.parse(raw);
+            if (Date.now() - data.time > 1000 * 60 * 60 * 6) return null;
+            return data.value;
+        } catch {
+            return null;
+        }
+    }
+
+    function setCache(key, value) {
+        cache[key] = value;
+
+        localStorage.setItem(key, JSON.stringify({
+            time: Date.now(),
+            value
+        }));
+    }
+
     // ---------------- CLEAN ----------------
     function clean(str) {
         return str
@@ -68,18 +71,8 @@
             .replace(/\(.*?\)/g, '')
             .replace(/\/.*/, '')
             .replace(/(WEB|HDR|BDRip|1080p|720p|2160p|x264|HEVC|AAC)/gi, '')
-            .replace(/\s{2,}/g, ' ')
+            .replace(/\s+/g, ' ')
             .trim();
-    }
-
-    function original(str) {
-        let m = str.match(/\/\s*([^(]+)/);
-        return m ? m[1].trim() : '';
-    }
-
-    function year(str) {
-        let m = str.match(/\((\d{4})\)/);
-        return m ? m[1] : '';
     }
 
     function imdb(str) {
@@ -87,51 +80,48 @@
         return m ? m[0] : '';
     }
 
-    // ---------------- TMDB FIND (IMDb) ----------------
-    function findByIMDB(id, cb) {
+    // ---------------- TMDB ----------------
+    function findIMDB(id, cb) {
         let key = 'imdb_' + id;
-
         let cached = getCache(key);
         if (cached) return cb(cached);
 
         addQueue((done) => {
-
             fetch(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=ru-RU`)
                 .then(r => r.json())
-                .then(json => {
-
-                    let res = json.movie_results[0] || json.tv_results[0];
-
+                .then(j => {
+                    let res = j.movie_results[0] || j.tv_results[0];
                     setCache(key, res);
                     cb(res);
-
                     done();
                 })
                 .catch(() => done());
-
         });
     }
 
-    // ---------------- SEARCH ----------------
     function search(query, cb) {
+        let key = 'search_' + query;
+        let cached = getCache(key);
+        if (cached) return cb(cached);
+
         addQueue((done) => {
             fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`)
                 .then(r => r.json())
                 .then(j => {
-                    cb(j.results[0]);
+                    let res = j.results?.[0];
+                    setCache(key, res);
+                    cb(res);
                     done();
                 })
                 .catch(() => done());
         });
     }
 
-    // ---------------- SMART ----------------
     function smart(item, cb) {
-
         let id = imdb(item.name);
 
         if (id) {
-            return findByIMDB(id, (res) => {
+            return findIMDB(id, res => {
                 if (res) return cb(res);
                 fallback();
             });
@@ -140,78 +130,107 @@
         fallback();
 
         function fallback() {
-            let q = original(item.name) || clean(item.name);
-            search(q, cb);
+            search(clean(item.name), cb);
         }
     }
 
-    // ---------------- NETFLIX UI ----------------
-    function renderRows(data) {
+    // ---------------- API ----------------
+    function RutorApi() {
 
-        let activity = Lampa.Activity.push({
-            title: 'Rutor Pro',
-            component: 'category'
-        });
+        this.category = function (params, onSuccess, onError) {
 
-        categories.forEach(cat => {
+            fetch(PROXY)
+                .then(r => r.json())
+                .then(data => {
 
-            let list = data[cat] || [];
+                    let parts = [];
 
-            let results = [];
+                    CATEGORIES.forEach(cat => {
 
-            list.slice(0, 20).forEach(item => {
+                        let row = {
+                            title: cat,
+                            results: []
+                        };
 
-                smart(item, (res) => {
-                    if (!res) return;
+                        parts.push(row);
 
-                    // авто перевод
-                    res.title = res.title || res.name;
-                    res.original_title = res.original_title || res.original_name;
+                        (data[cat] || []).slice(0, 20).forEach(item => {
 
-                    results.push(res);
+                            smart(item, res => {
 
-                    activity.append({
-                        title: cat,
-                        results: [res]
+                                if (!res) return;
+
+                                row.results.push({
+                                    id: res.id,
+                                    title: res.title || res.name,
+                                    original_title: res.original_title || res.original_name,
+                                    poster_path: res.poster_path,
+                                    backdrop_path: res.backdrop_path,
+                                    overview: res.overview,
+                                    vote_average: res.vote_average,
+                                    type: res.media_type
+                                });
+
+                                if (row.update) row.update();
+
+                            });
+
+                        });
+
                     });
+
+                    onSuccess(parts);
+
+                })
+                .catch(e => {
+                    console.log('PROXY ERROR', e);
+                    onError(e);
                 });
+        };
 
-            });
+        this.full = function (params, onSuccess, onError) {
+            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+        };
+    }
 
+    // ---------------- INIT ----------------
+    function start() {
+
+        let api = new RutorApi();
+
+        Lampa.Api.sources.rutorpro = api;
+
+        Object.defineProperty(Lampa.Api.sources, SOURCE_NAME, {
+            get: () => api
         });
 
-    }
-
-    // ---------------- LOAD ----------------
-    function load() {
-        fetch(PROXY)
-            .then(r => r.json())
-            .then(renderRows);
-    }
-
-    // ---------------- BUTTON (FIXED) ----------------
-    function init() {
-
+        // 🔥 НАДЁЖНАЯ КНОПКА
         Lampa.Listener.follow('menu', function (e) {
 
             if (e.type === 'render') {
 
                 e.items.push({
-                    title: 'Rutor Pro',
+                    title: SOURCE_NAME,
                     icon: '🔥',
-
-                    onSelect: load
+                    onSelect: function () {
+                        Lampa.Activity.push({
+                            title: SOURCE_NAME,
+                            component: 'category',
+                            source: SOURCE_NAME
+                        });
+                    }
                 });
 
             }
 
         });
-
     }
 
-    if (window.appready) init();
-    else Lampa.Listener.follow('app', e => {
-        if (e.type === 'ready') init();
-    });
+    if (window.appready) start();
+    else {
+        Lampa.Listener.follow('app', e => {
+            if (e.type === 'ready') start();
+        });
+    }
 
 })();
