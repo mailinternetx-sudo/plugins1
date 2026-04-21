@@ -144,7 +144,7 @@
     function render(data) {
 
         let activity = Lampa.Activity.push({
-            title: 'Rutor Pro',
+            title: 'Rutor Pro 2',
             component: 'category'
         });
 
@@ -195,7 +195,7 @@
             if (e.type === 'render') {
 
                 e.items.push({
-                    title: 'Rutor Pro',
+                    title: 'Rutor Pro 2',
                     icon: '🔥',
                     onSelect: load
                 });
