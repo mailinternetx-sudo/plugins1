@@ -1,89 +1,215 @@
 (function () {
     'use strict';
 
-    var SOURCE_NAME = 'FIX FINAL';
-    var API_URL = 'https://script.google.com/macros/s/AKfycbyfaTd43bLjpj0fgICwORZb1o-ibPhZqNN7Xpc87Hy1YDmHIlh0-Xq5tNwmnnmkwmLF/exec'; // вставь свой
+    const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
+    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    var SHEETS = [
-        'Топ 24ч',
-        'Зарубежные фильмы',
-        'Наши фильмы',
-        'Зарубежные сериалы',
-        'Наши сериалы',
-        'Телевизор'
+    const categories = [
+        "Топ 24ч",
+        "Зарубежные фильмы",
+        "Наши фильмы",
+        "Зарубежные сериалы",
+        "Наши сериалы",
+        "Телевизор"
     ];
 
-    function Api() {
-        var network = new Lampa.Reguest();
+    let cache = {};
+    let queue = [];
+    let active = 0;
+    const MAX = 6;
 
-        this.category = function (params, onSuccess) {
+    // ---------------- CACHE ----------------
+    function getCache(key) {
+        if (cache[key]) return cache[key];
 
-            var parts = [];
+        let local = localStorage.getItem(key);
+        if (!local) return null;
 
-            SHEETS.forEach(function (sheet) {
+        try {
+            let data = JSON.parse(local);
+            if (Date.now() - data.time > 1000 * 60 * 60 * 12) return null;
+            return data.value;
+        } catch {
+            return null;
+        }
+    }
 
-                parts.push(function (next) {
+    function setCache(key, value) {
+        cache[key] = value;
+        localStorage.setItem(key, JSON.stringify({
+            time: Date.now(),
+            value
+        }));
+    }
 
-                    network.silent(API_URL + '?sheet=' + sheet, function (json) {
+    // ---------------- QUEUE ----------------
+    function runQueue() {
+        if (active >= MAX || !queue.length) return;
 
-                        var results = (json.results || []).map(function (item) {
-                            return {
-                                id: item.id, // ✅ теперь всегда TMDB
-                                title: item.title,
-                                name: item.title,
-                                poster_path: item.poster_path,
-                                backdrop_path: item.poster_path,
-                                vote_average: item.vote_average || 0,
-                                type: item.type || 'movie',
-                                source: 'tmdb' // 💥 КРИТИЧНО
-                            };
-                        });
+        const job = queue.shift();
+        active++;
 
-                        next({
-                            title: sheet,
-                            results: results,
-                            page: 1,
-                            total_pages: 1
-                        });
+        job(() => {
+            active--;
+            runQueue();
+        });
 
-                    }, function () {
-                        next({ title: sheet, results: [] });
-                    });
+        runQueue();
+    }
 
+    function addQueue(fn) {
+        queue.push(fn);
+        runQueue();
+    }
+
+    // ---------------- CLEAN ----------------
+    function clean(str) {
+        return str
+            .replace(/\[.*?\]/g, '')
+            .replace(/\(.*?\)/g, '')
+            .replace(/\/.*/, '')
+            .replace(/(WEB|HDR|BDRip|1080p|720p|2160p|x264|HEVC|AAC)/gi, '')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+    }
+
+    function original(str) {
+        let m = str.match(/\/\s*([^(]+)/);
+        return m ? m[1].trim() : '';
+    }
+
+    function imdb(str) {
+        let m = str.match(/tt\d+/);
+        return m ? m[0] : '';
+    }
+
+    // ---------------- TMDB FIND ----------------
+    function findIMDB(id, cb) {
+        let key = 'imdb_' + id;
+        let cached = getCache(key);
+        if (cached) return cb(cached);
+
+        addQueue((done) => {
+            fetch(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=ru-RU`)
+                .then(r => r.json())
+                .then(j => {
+                    let res = j.movie_results[0] || j.tv_results[0];
+                    setCache(key, res);
+                    cb(res);
+                    done();
+                })
+                .catch(() => done());
+        });
+    }
+
+    function search(query, cb) {
+        let key = 'search_' + query;
+        let cached = getCache(key);
+        if (cached) return cb(cached);
+
+        addQueue((done) => {
+            fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`)
+                .then(r => r.json())
+                .then(j => {
+                    let res = j.results?.[0];
+                    setCache(key, res);
+                    cb(res);
+                    done();
+                })
+                .catch(() => done());
+        });
+    }
+
+    // ---------------- SMART ----------------
+    function smart(item, cb) {
+
+        let id = imdb(item.name);
+
+        if (id) {
+            return findIMDB(id, (res) => {
+                if (res) return cb(res);
+                fallback();
+            });
+        }
+
+        fallback();
+
+        function fallback() {
+            let q = original(item.name) || clean(item.name);
+            search(q, cb);
+        }
+    }
+
+    // ---------------- UI RENDER ----------------
+    function render(data) {
+
+        let activity = Lampa.Activity.push({
+            title: 'Rutor Pro',
+            component: 'category'
+        });
+
+        categories.forEach(cat => {
+
+            let row = {
+                title: cat,
+                results: []
+            };
+
+            activity.append(row);
+
+            (data[cat] || []).slice(0, 20).forEach(item => {
+
+                if (!item?.name) return;
+
+                smart(item, (res) => {
+
+                    if (!res) return;
+
+                    res.title = res.title || res.name;
+                    res.original_title = res.original_title || res.original_name;
+                    res.type = res.media_type;
+
+                    row.results.push(res);
+
+                    activity.update();
                 });
 
             });
 
-            Lampa.Api.partNext(parts, 2, onSuccess);
-        };
-
-        this.full = function (params, onSuccess, onError) {
-            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
-        };
+        });
     }
 
-    function start() {
-        if (window.fix_final_ready) return;
-        window.fix_final_ready = true;
+    // ---------------- LOAD ----------------
+    function load() {
+        fetch(PROXY)
+            .then(r => r.json())
+            .then(render)
+            .catch(e => console.log('LOAD ERROR', e));
+    }
 
-        var api = new Api();
-        Lampa.Api.sources[SOURCE_NAME] = api;
+    // ---------------- BUTTON ----------------
+    function init() {
 
-        $('.menu .menu__list').eq(0).append(
-            $('<li class="menu__item selector"><div class="menu__text">' + SOURCE_NAME + '</div></li>')
-            .on('hover:enter', function () {
-                Lampa.Activity.push({
-                    component: 'category',
-                    source: SOURCE_NAME
+        Lampa.Listener.follow('menu', function (e) {
+
+            if (e.type === 'render') {
+
+                e.items.push({
+                    title: 'Rutor Pro',
+                    icon: '🔥',
+                    onSelect: load
                 });
-            })
-        );
+
+            }
+
+        });
+
     }
 
-    if (window.appready) start();
+    if (window.appready) init();
     else {
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') start();
+        Lampa.Listener.follow('app', e => {
+            if (e.type === 'ready') init();
         });
     }
 
