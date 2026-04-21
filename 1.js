@@ -37,41 +37,64 @@
         runQueue();
     }
 
-    // ---------------- PARSE ----------------
-    function variants(item) {
-        let arr = [];
-
-        if (item.original) arr.push(item.original);
-
-        let clean = item.name
+    // ---------------- CLEAN TITLE ----------------
+    function cleanTitle(str) {
+        return str
+            .replace(/\[.*?\]/g, '')
             .replace(/\(.*?\)/g, '')
             .replace(/\/.*/, '')
-            .replace(/(WEB|HDR|1080p|720p|BDRip)/gi, '')
+            .replace(/(WEB|HDR|BDRip|1080p|720p|2160p|x264|H\.264|HEVC|AAC)/gi, '')
+            .replace(/\s{2,}/g, ' ')
             .trim();
-
-        arr.push(clean);
-        arr.push(clean.split(' ').slice(0, 2).join(' '));
-
-        return arr;
     }
 
-    // ---------------- TMDB ----------------
-    function search(query, year, cb) {
+    function getOriginal(str) {
+        let m = str.match(/\/\s*([^(]+)/);
+        return m ? m[1].trim() : '';
+    }
+
+    function getYear(str) {
+        let m = str.match(/\((\d{4})\)/);
+        return m ? m[1] : '';
+    }
+
+    // ---------------- SEARCH VARIANTS ----------------
+    function buildQueries(item) {
+        let arr = [];
+
+        if (item.original) arr.push(item.original);     // EN
+        arr.push(cleanTitle(item.name));                // RU
+        arr.push(cleanTitle(item.name).split(' ').slice(0,2).join(' ')); // fallback
+
+        return arr.filter(Boolean);
+    }
+
+    // ---------------- TMDB SEARCH ----------------
+    function searchTMDB(query, year, cb) {
+
         addQueue((done) => {
-            fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`)
+
+            fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`)
                 .then(r => r.json())
                 .then(json => {
-                    let res = pick(json.results, year);
+
+                    let res = pickBest(json.results, year);
+
                     cb(res);
                     done();
+
                 })
                 .catch(() => done());
+
         });
     }
 
-    function pick(results = [], year) {
+    function pickBest(results = [], year) {
+
         return results
+            .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
             .map(r => {
+
                 let score = r.popularity || 0;
 
                 if (year) {
@@ -86,13 +109,15 @@
             .sort((a, b) => b.score - a.score)[0];
     }
 
-    function smart(item, cb) {
-        let list = variants(item);
+    // ---------------- SMART SEARCH ----------------
+    function smartSearch(item, cb) {
+
+        let queries = buildQueries(item);
 
         function tryOne(i = 0) {
-            if (i >= list.length) return cb(null);
+            if (i >= queries.length) return cb(null);
 
-            search(list[i], item.year, (res) => {
+            searchTMDB(queries[i], item.year, (res) => {
                 if (res) return cb(res);
                 tryOne(i + 1);
             });
@@ -101,10 +126,8 @@
         tryOne();
     }
 
-    // ---------------- LOAD ----------------
+    // ---------------- LOAD CATEGORY ----------------
     function load(category) {
-
-        if (!category) return;
 
         Lampa.Activity.push({
             title: category,
@@ -115,22 +138,34 @@
 
         fetch(PROXY)
             .then(r => r.json())
-            .then(list => {
+            .then(data => {
 
+                let list = data[category] || [];
                 let seen = new Set();
 
-                list.slice(0, 40).forEach(item => {
+                list.slice(0, 40).forEach(raw => {
 
-                    if (!item || !item.name) return;
-                    if (item.name.includes('XXX')) return;
+                    if (!raw || !raw.name) return;
+                    if (raw.name.includes('XXX')) return;
 
-                    smart(item, (res) => {
+                    let item = {
+                        name: raw.name,
+                        original: getOriginal(raw.name),
+                        year: getYear(raw.name)
+                    };
+
+                    smartSearch(item, (res) => {
+
                         if (!res) return;
                         if (seen.has(res.id)) return;
 
                         seen.add(res.id);
 
+                        // 👉 Точное определение типа
+                        res.type = res.media_type === 'tv' ? 'tv' : 'movie';
+
                         Lampa.Activity.active().append([res]);
+
                     });
 
                 });
@@ -139,21 +174,17 @@
             .catch(e => console.log('FETCH ERROR:', e));
     }
 
-    // ---------------- UI (ГЛАВНЫЙ ЭКРАН) ----------------
+    // ---------------- UI ----------------
     function init() {
-
-        console.log('RUTOR INIT');
 
         Lampa.Listener.follow('menu', function (e) {
 
             if (e.type === 'ready') {
 
-                console.log('MENU READY → ADD BUTTON');
-
                 Lampa.Menu.add({
                     title: 'Rutor Pro',
                     icon: '🔥',
-                    type: 'button',   // 🔥 ключ для главного экрана
+                    type: 'button',
                     position: 0,
 
                     onSelect: function () {
@@ -169,6 +200,7 @@
 
                     }
                 });
+
             }
         });
     }
