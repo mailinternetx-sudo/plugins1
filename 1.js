@@ -5,17 +5,41 @@
     const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
     const categories = [
-        { title: "Топ 24ч" },
-        { title: "Зарубежные фильмы" },
-        { title: "Наши фильмы" },
-        { title: "Зарубежные сериалы" },
-        { title: "Наши сериалы" },
-        { title: "Телевизор" }
+        "Топ 24ч",
+        "Зарубежные фильмы",
+        "Наши фильмы",
+        "Зарубежные сериалы",
+        "Наши сериалы",
+        "Телевизор"
     ];
 
     let queue = [];
     let active = 0;
     const MAX = 5;
+
+    let cache = {};
+
+    // ---------------- CACHE ----------------
+    function getCache(key) {
+        if (cache[key]) return cache[key];
+
+        let local = localStorage.getItem(key);
+        if (!local) return null;
+
+        let data = JSON.parse(local);
+        if (Date.now() - data.time > 1000 * 60 * 60 * 6) return null;
+
+        return data.value;
+    }
+
+    function setCache(key, value) {
+        cache[key] = value;
+
+        localStorage.setItem(key, JSON.stringify({
+            time: Date.now(),
+            value
+        }));
+    }
 
     // ---------------- QUEUE ----------------
     function runQueue() {
@@ -37,180 +61,157 @@
         runQueue();
     }
 
-    // ---------------- CLEAN TITLE ----------------
-    function cleanTitle(str) {
+    // ---------------- CLEAN ----------------
+    function clean(str) {
         return str
             .replace(/\[.*?\]/g, '')
             .replace(/\(.*?\)/g, '')
             .replace(/\/.*/, '')
-            .replace(/(WEB|HDR|BDRip|1080p|720p|2160p|x264|H\.264|HEVC|AAC)/gi, '')
+            .replace(/(WEB|HDR|BDRip|1080p|720p|2160p|x264|HEVC|AAC)/gi, '')
             .replace(/\s{2,}/g, ' ')
             .trim();
     }
 
-    function getOriginal(str) {
+    function original(str) {
         let m = str.match(/\/\s*([^(]+)/);
         return m ? m[1].trim() : '';
     }
 
-    function getYear(str) {
+    function year(str) {
         let m = str.match(/\((\d{4})\)/);
         return m ? m[1] : '';
     }
 
-    // ---------------- SEARCH VARIANTS ----------------
-    function buildQueries(item) {
-        let arr = [];
-
-        if (item.original) arr.push(item.original);     // EN
-        arr.push(cleanTitle(item.name));                // RU
-        arr.push(cleanTitle(item.name).split(' ').slice(0,2).join(' ')); // fallback
-
-        return arr.filter(Boolean);
+    function imdb(str) {
+        let m = str.match(/tt\d+/);
+        return m ? m[0] : '';
     }
 
-    // ---------------- TMDB SEARCH ----------------
-    function searchTMDB(query, year, cb) {
+    // ---------------- TMDB FIND (IMDb) ----------------
+    function findByIMDB(id, cb) {
+        let key = 'imdb_' + id;
+
+        let cached = getCache(key);
+        if (cached) return cb(cached);
 
         addQueue((done) => {
 
-            fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`)
+            fetch(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=ru-RU`)
                 .then(r => r.json())
                 .then(json => {
 
-                    let res = pickBest(json.results, year);
+                    let res = json.movie_results[0] || json.tv_results[0];
 
+                    setCache(key, res);
                     cb(res);
-                    done();
 
+                    done();
                 })
                 .catch(() => done());
 
         });
     }
 
-    function pickBest(results = [], year) {
-
-        return results
-            .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
-            .map(r => {
-
-                let score = r.popularity || 0;
-
-                if (year) {
-                    if ((r.release_date || '').includes(year)) score += 40;
-                    if ((r.first_air_date || '').includes(year)) score += 40;
-                }
-
-                if (r.original_language === 'en') score += 10;
-
-                return { ...r, score };
-            })
-            .sort((a, b) => b.score - a.score)[0];
+    // ---------------- SEARCH ----------------
+    function search(query, cb) {
+        addQueue((done) => {
+            fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`)
+                .then(r => r.json())
+                .then(j => {
+                    cb(j.results[0]);
+                    done();
+                })
+                .catch(() => done());
+        });
     }
 
-    // ---------------- SMART SEARCH ----------------
-    function smartSearch(item, cb) {
+    // ---------------- SMART ----------------
+    function smart(item, cb) {
 
-        let queries = buildQueries(item);
+        let id = imdb(item.name);
 
-        function tryOne(i = 0) {
-            if (i >= queries.length) return cb(null);
-
-            searchTMDB(queries[i], item.year, (res) => {
+        if (id) {
+            return findByIMDB(id, (res) => {
                 if (res) return cb(res);
-                tryOne(i + 1);
+                fallback();
             });
         }
 
-        tryOne();
+        fallback();
+
+        function fallback() {
+            let q = original(item.name) || clean(item.name);
+            search(q, cb);
+        }
     }
 
-    // ---------------- LOAD CATEGORY ----------------
-    function load(category) {
+    // ---------------- NETFLIX UI ----------------
+    function renderRows(data) {
 
-        Lampa.Activity.push({
-            title: category,
-            component: 'category_full',
-            results: [],
-            page: 1
+        let activity = Lampa.Activity.push({
+            title: 'Rutor Pro',
+            component: 'category'
         });
 
-        fetch(PROXY)
-            .then(r => r.json())
-            .then(data => {
+        categories.forEach(cat => {
 
-                let list = data[category] || [];
-                let seen = new Set();
+            let list = data[cat] || [];
 
-                list.slice(0, 40).forEach(raw => {
+            let results = [];
 
-                    if (!raw || !raw.name) return;
-                    if (raw.name.includes('XXX')) return;
+            list.slice(0, 20).forEach(item => {
 
-                    let item = {
-                        name: raw.name,
-                        original: getOriginal(raw.name),
-                        year: getYear(raw.name)
-                    };
+                smart(item, (res) => {
+                    if (!res) return;
 
-                    smartSearch(item, (res) => {
+                    // авто перевод
+                    res.title = res.title || res.name;
+                    res.original_title = res.original_title || res.original_name;
 
-                        if (!res) return;
-                        if (seen.has(res.id)) return;
+                    results.push(res);
 
-                        seen.add(res.id);
-
-                        // 👉 Точное определение типа
-                        res.type = res.media_type === 'tv' ? 'tv' : 'movie';
-
-                        Lampa.Activity.active().append([res]);
-
+                    activity.append({
+                        title: cat,
+                        results: [res]
                     });
-
                 });
 
-            })
-            .catch(e => console.log('FETCH ERROR:', e));
+            });
+
+        });
+
     }
 
-    // ---------------- UI ----------------
+    // ---------------- LOAD ----------------
+    function load() {
+        fetch(PROXY)
+            .then(r => r.json())
+            .then(renderRows);
+    }
+
+    // ---------------- BUTTON (FIXED) ----------------
     function init() {
 
         Lampa.Listener.follow('menu', function (e) {
 
-            if (e.type === 'ready') {
+            if (e.type === 'render') {
 
-                Lampa.Menu.add({
+                e.items.push({
                     title: 'Rutor Pro',
                     icon: '🔥',
-                    type: 'button',
-                    position: 0,
 
-                    onSelect: function () {
-
-                        Lampa.Select.show({
-                            title: 'Категории',
-                            items: categories,
-
-                            onSelect: function (item) {
-                                load(item.title);
-                            }
-                        });
-
-                    }
+                    onSelect: load
                 });
 
             }
+
         });
+
     }
 
-    // ---------------- START ----------------
     if (window.appready) init();
-    else {
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') init();
-        });
-    }
+    else Lampa.Listener.follow('app', e => {
+        if (e.type === 'ready') init();
+    });
 
 })();
