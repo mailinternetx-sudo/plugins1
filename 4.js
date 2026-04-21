@@ -13,10 +13,11 @@
         "Телевизор"
     ];
 
-    let cache = {};
     let queue = [];
     let active = 0;
-    const MAX = 6;
+    const MAX = 5;
+
+    let cache = {};
 
     // ---------------- CACHE ----------------
     function getCache(key) {
@@ -25,17 +26,15 @@
         let local = localStorage.getItem(key);
         if (!local) return null;
 
-        try {
-            let data = JSON.parse(local);
-            if (Date.now() - data.time > 1000 * 60 * 60 * 12) return null;
-            return data.value;
-        } catch {
-            return null;
-        }
+        let data = JSON.parse(local);
+        if (Date.now() - data.time > 1000 * 60 * 60 * 6) return null;
+
+        return data.value;
     }
 
     function setCache(key, value) {
         cache[key] = value;
+
         localStorage.setItem(key, JSON.stringify({
             time: Date.now(),
             value
@@ -78,42 +77,48 @@
         return m ? m[1].trim() : '';
     }
 
+    function year(str) {
+        let m = str.match(/\((\d{4})\)/);
+        return m ? m[1] : '';
+    }
+
     function imdb(str) {
         let m = str.match(/tt\d+/);
         return m ? m[0] : '';
     }
 
-    // ---------------- TMDB FIND ----------------
-    function findIMDB(id, cb) {
+    // ---------------- TMDB FIND (IMDb) ----------------
+    function findByIMDB(id, cb) {
         let key = 'imdb_' + id;
+
         let cached = getCache(key);
         if (cached) return cb(cached);
 
         addQueue((done) => {
+
             fetch(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=ru-RU`)
                 .then(r => r.json())
-                .then(j => {
-                    let res = j.movie_results[0] || j.tv_results[0];
+                .then(json => {
+
+                    let res = json.movie_results[0] || json.tv_results[0];
+
                     setCache(key, res);
                     cb(res);
+
                     done();
                 })
                 .catch(() => done());
+
         });
     }
 
+    // ---------------- SEARCH ----------------
     function search(query, cb) {
-        let key = 'search_' + query;
-        let cached = getCache(key);
-        if (cached) return cb(cached);
-
         addQueue((done) => {
             fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`)
                 .then(r => r.json())
                 .then(j => {
-                    let res = j.results?.[0];
-                    setCache(key, res);
-                    cb(res);
+                    cb(j.results[0]);
                     done();
                 })
                 .catch(() => done());
@@ -126,7 +131,7 @@
         let id = imdb(item.name);
 
         if (id) {
-            return findIMDB(id, (res) => {
+            return findByIMDB(id, (res) => {
                 if (res) return cb(res);
                 fallback();
             });
@@ -140,54 +145,51 @@
         }
     }
 
-    // ---------------- UI RENDER ----------------
-    function render(data) {
+    // ---------------- NETFLIX UI ----------------
+    function renderRows(data) {
 
         let activity = Lampa.Activity.push({
-            title: 'Rutor Pro 2',
+            title: 'Rutor Pro',
             component: 'category'
         });
 
         categories.forEach(cat => {
 
-            let row = {
-                title: cat,
-                results: []
-            };
+            let list = data[cat] || [];
 
-            activity.append(row);
+            let results = [];
 
-            (data[cat] || []).slice(0, 20).forEach(item => {
-
-                if (!item?.name) return;
+            list.slice(0, 20).forEach(item => {
 
                 smart(item, (res) => {
-
                     if (!res) return;
 
+                    // авто перевод
                     res.title = res.title || res.name;
                     res.original_title = res.original_title || res.original_name;
-                    res.type = res.media_type;
 
-                    row.results.push(res);
+                    results.push(res);
 
-                    activity.update();
+                    activity.append({
+                        title: cat,
+                        results: [res]
+                    });
                 });
 
             });
 
         });
+
     }
 
     // ---------------- LOAD ----------------
     function load() {
         fetch(PROXY)
             .then(r => r.json())
-            .then(render)
-            .catch(e => console.log('LOAD ERROR', e));
+            .then(renderRows);
     }
 
-    // ---------------- BUTTON ----------------
+    // ---------------- BUTTON (FIXED) ----------------
     function init() {
 
         Lampa.Listener.follow('menu', function (e) {
@@ -195,8 +197,9 @@
             if (e.type === 'render') {
 
                 e.items.push({
-                    title: 'Rutor Pro 2',
+                    title: 'Rutor Pro',
                     icon: '🔥',
+
                     onSelect: load
                 });
 
@@ -207,10 +210,8 @@
     }
 
     if (window.appready) init();
-    else {
-        Lampa.Listener.follow('app', e => {
-            if (e.type === 'ready') init();
-        });
-    }
+    else Lampa.Listener.follow('app', e => {
+        if (e.type === 'ready') init();
+    });
 
 })();
