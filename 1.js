@@ -1,132 +1,185 @@
 (function () {
     'use strict';
 
-    var SOURCE_NAME = 'V10 v2';
-    var API_URL = 'https://script.google.com/macros/s/AKfycbyfaTd43bLjpj0fgICwORZb1o-ibPhZqNN7Xpc87Hy1YDmHIlh0-Xq5tNwmnnmkwmLF/exec';
+    const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
+    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    var SHEETS = [
-        'Топ 24ч',
-        'Зарубежные фильмы',
-        'Наши фильмы',
-        'Зарубежные сериалы',
-        'Наши сериалы',
-        'Телевизор'
+    const categories = [
+        "Топ 24ч",
+        "Зарубежные фильмы",
+        "Наши фильмы",
+        "Зарубежные сериалы",
+        "Наши сериалы",
+        "Телевизор"
     ];
 
-    function Api() {
-        var network = new Lampa.Reguest();
+    let cache = {};
+    let queue = [];
+    let active = 0;
+    const MAX = 5;
 
-        this.category = function (params, onSuccess) {
-            var parts = [];
+    // ---------------- QUEUE ----------------
+    function runQueue() {
+        if (active >= MAX || !queue.length) return;
 
-            SHEETS.forEach(function (sheet) {
-                parts.push(function (next) {
-                    var url = API_URL + '?sheet=' + encodeURIComponent(sheet);
+        const job = queue.shift();
+        active++;
 
-                    network.silent(url, function (json) {
-                        if (!json || json.error) {
-                            return next(makeEmpty(sheet));
-                        }
+        job(() => {
+            active--;
+            runQueue();
+        });
 
-                        var results = (json.results || []).map(function (item) {
-                            return {
-                                id: item.id,
-                                title: item.title,
-                                name: item.title,
-                                original_title: item.title, // Добавлено для корректного поиска
-                                poster_path: normalize(item.poster_path),
-                                backdrop_path: normalize(item.poster_path),
-                                vote_average: item.vote_average || 0,
-                                type: item.type || 'movie',
-                                source: SOURCE_NAME
-                            };
-                        });
+        runQueue();
+    }
 
-                        next({
-                            title: sheet,
-                            results: results,
-                            page: 1,
-                            total_pages: 1
-                        });
+    function addQueue(fn) {
+        queue.push(fn);
+        runQueue();
+    }
 
-                    }, function () {
-                        next(makeEmpty(sheet));
-                    });
-                });
-            });
+    // ---------------- CACHE ----------------
+    function getCache(key) {
+        if (cache[key]) return cache[key];
 
-            Lampa.Api.partNext(parts, 2, function (data) {
-                // 🔥 Улучшение: Скрываем пустые категории, чтобы не мусорить в меню
-                var filteredData = data.filter(function(cat) {
-                    return cat.results && cat.results.length > 0;
-                });
+        let local = localStorage.getItem(key);
+        if (!local) return null;
 
-                // Если все пустые (например таблица еще не обновилась), показываем хотя бы заглушку
-                if (filteredData.length === 0) {
-                    filteredData = [{
-                        title: 'Загрузка данных...',
-                        results: [],
-                        page: 1,
-                        total_pages: 1
-                    }];
+        let data = JSON.parse(local);
+        if (Date.now() - data.time > 1000 * 60 * 20) return null;
+
+        return data.value;
+    }
+
+    function setCache(key, value) {
+        cache[key] = value;
+
+        localStorage.setItem(key, JSON.stringify({
+            time: Date.now(),
+            value
+        }));
+    }
+
+    // ---------------- SEARCH VARIANTS ----------------
+    function variants(item) {
+        let arr = [];
+
+        if (item.original) arr.push(item.original);
+
+        let clean = item.name
+            .replace(/\(.*?\)/g, '')
+            .replace(/\/.*/, '')
+            .trim();
+
+        arr.push(clean);
+        arr.push(clean.split(' ').slice(0, 2).join(' '));
+
+        return arr;
+    }
+
+    // ---------------- TMDB ----------------
+    function searchTMDB(query, year, callback) {
+        let key = 'tmdb_' + query + year;
+        let cached = getCache(key);
+        if (cached) return callback(cached);
+
+        addQueue((done) => {
+            fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`)
+                .then(r => r.json())
+                .then(json => {
+                    let res = pick(json.results, year);
+
+                    setCache(key, res);
+                    callback(res);
+
+                    done();
+                })
+                .catch(() => done());
+        });
+    }
+
+    function pick(results = [], year) {
+        return results
+            .map(r => {
+                let score = r.popularity || 0;
+
+                if (year) {
+                    if ((r.release_date || '').includes(year)) score += 40;
+                    if ((r.first_air_date || '').includes(year)) score += 40;
                 }
 
-                onSuccess(filteredData);
+                return { ...r, score };
+            })
+            .sort((a, b) => b.score - a.score)[0];
+    }
+
+    // ---------------- SMART SEARCH ----------------
+    function smart(item, cb) {
+        let list = variants(item);
+
+        function tryOne(i = 0) {
+            if (i >= list.length) return cb(null);
+
+            searchTMDB(list[i], item.year, (res) => {
+                if (res) return cb(res);
+                tryOne(i + 1);
             });
-        };
-
-        this.full = function (params, onSuccess, onError) {
-            // При клике на фильм ищем его через стандартный метод TMDB внутри Lamp'ы
-            if (params.id) {
-                Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
-            } else {
-                onError('No ID');
-            }
-        };
-
-        function makeEmpty(sheet) {
-            return {
-                title: sheet,
-                results: [],
-                page: 1,
-                total_pages: 1
-            };
         }
+
+        tryOne();
     }
 
-    function normalize(url) {
-        if (!url) return '';
-        // Google скрипт теперь отдает полные URL, проверяем это
-        if (url.indexOf('http') === 0) return url;
-        return 'https://image.tmdb.org/t/p/w500' + url;
-    }
+    // ---------------- LOAD CATEGORY ----------------
+    function load(category) {
+        Lampa.Activity.push({
+            title: category,
+            component: 'category_full',
+            results: [],
+            page: 1
+        });
 
-    function start() {
-        if (window.v10v2_ready) return;
-        window.v10v2_ready = true;
+        fetch(PROXY + '?cat=' + encodeURIComponent(category))
+            .then(r => r.json())
+            .then(list => {
 
-        var api = new Api();
-        Lampa.Api.sources[SOURCE_NAME] = api;
+                let seen = new Set();
 
-        var btn = $('<li class="menu__item selector"><div class="menu__text">' + SOURCE_NAME + '</div></li>');
+                list.slice(0, 40).forEach(item => {
 
-        btn.on('hover:enter', function () {
-            Lampa.Activity.push({
-                component: 'category',
-                source: SOURCE_NAME,
-                title: SOURCE_NAME,
-                page: 1
+                    if (item.name.includes('XXX')) return;
+
+                    smart(item, (res) => {
+                        if (!res) return;
+                        if (seen.has(res.id)) return;
+
+                        seen.add(res.id);
+
+                        Lampa.Activity.active().append([res]);
+                    });
+
+                });
+
             });
-        });
-
-        $('.menu .menu__list').eq(0).append(btn);
     }
 
-    if (window.appready) start();
-    else {
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') start();
+    // ---------------- UI ----------------
+    function init() {
+        Lampa.Menu.add({
+            title: 'Rutor Pro',
+            icon: '🔥',
+            onSelect: function () {
+                Lampa.Select.show({
+                    title: 'Категории',
+                    items: categories,
+                    onSelect: load
+                });
+            }
         });
     }
+
+    if (window.appready) init();
+    else Lampa.Listener.follow('app', e => {
+        if (e.type === 'ready') init();
+    });
 
 })();
