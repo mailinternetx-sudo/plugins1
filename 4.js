@@ -69,9 +69,9 @@
 
     // ---------------- PARSE ----------------
     function parseItem(str) {
+
         let year = (str.match(/\((\d{4})\)/) || [])[1] || '';
         let imdb = (str.match(/tt\d+/) || [])[0] || '';
-        let isTV = /\[.*?\]/.test(str);
 
         let name = str
             .split('(')[0]
@@ -81,7 +81,7 @@
             .replace(/\s+/g, ' ')
             .trim();
 
-        return { name, year, imdb, isTV };
+        return { name, year, imdb };
     }
 
     // ---------------- SIMILARITY ----------------
@@ -111,6 +111,7 @@
 
     // ---------------- TMDB ----------------
     function findIMDB(id, cb) {
+
         let key = 'imdb_' + id;
         let cached = getCache(key);
         if (cached) return cb(cached);
@@ -141,14 +142,15 @@
     }
 
     // ---------------- KP ----------------
-    function searchKP(q, cb) {
+    function kpToIMDb(kp_id, cb) {
+
         addQueue(done => {
-            fetch(`https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(q)}`, {
+            fetch(`https://kinopoiskapiunofficial.tech/api/v2.2/films/${kp_id}`, {
                 headers: { 'X-API-KEY': KP_API_KEY }
             })
                 .then(r => r.json())
                 .then(j => {
-                    cb(j.films?.[0]);
+                    cb(j.imdbId || null);
                     done();
                 })
                 .catch(() => done());
@@ -171,96 +173,106 @@
     // ---------------- SMART ----------------
     function smart(item, cb) {
 
-        let p = parseItem(item.name);
+        let parsed = parseItem(item.name);
 
-        if (p.imdb) {
-            return findIMDB(p.imdb, res => {
+        // 1 IMDb
+        if (item.imdb) {
+            return findIMDB(item.imdb, res => {
                 if (res) return cb(res);
-                chain();
+                fallback();
             });
         }
 
-        chain();
+        // 2 KP → IMDb
+        if (item.kp) {
+            return kpToIMDb(item.kp, imdb => {
+                if (imdb) {
+                    return findIMDB(imdb, res => {
+                        if (res) return cb(res);
+                        fallback();
+                    });
+                }
+                fallback();
+            });
+        }
 
-        function chain() {
+        // 3 IMDb из строки
+        if (parsed.imdb) {
+            return findIMDB(parsed.imdb, res => {
+                if (res) return cb(res);
+                fallback();
+            });
+        }
+
+        fallback();
+
+        function fallback() {
 
             let candidates = [];
 
-            searchKP(p.name, kp => {
+            searchTMDB(parsed.name, 'ru-RU', ru => {
 
-                if (kp) {
+                ru.slice(0, 5).forEach(r => {
                     candidates.push({
-                        title: kp.nameRu || kp.nameEn,
-                        year: kp.year,
-                        score: 1,
-                        imdb: kp.imdbId
+                        title: r.title || r.name,
+                        year: (r.release_date || r.first_air_date || '').slice(0,4),
+                        score: 0.9,
+                        raw: r
                     });
-                }
+                });
 
-                searchTMDB(p.name, 'ru-RU', ru => {
+                searchTMDB(parsed.name, 'en-US', en => {
 
-                    ru.slice(0, 5).forEach(r => {
+                    en.slice(0, 5).forEach(r => {
                         candidates.push({
                             title: r.title || r.name,
                             year: (r.release_date || r.first_air_date || '').slice(0,4),
-                            score: 0.9,
+                            score: 0.8,
                             raw: r
                         });
                     });
 
-                    searchTMDB(p.name, 'en-US', en => {
+                    searchOMDB(parsed.name, omdb => {
 
-                        en.slice(0, 5).forEach(r => {
+                        omdb.slice(0, 5).forEach(r => {
                             candidates.push({
-                                title: r.title || r.name,
-                                year: (r.release_date || r.first_air_date || '').slice(0,4),
-                                score: 0.8,
-                                raw: r
+                                title: r.Title,
+                                year: r.Year,
+                                score: 0.7,
+                                imdb: r.imdbID
                             });
                         });
 
-                        searchOMDB(p.name, omdb => {
-
-                            omdb.slice(0, 5).forEach(r => {
-                                candidates.push({
-                                    title: r.Title,
-                                    year: r.Year,
-                                    score: 0.7,
-                                    imdb: r.imdbID
-                                });
-                            });
-
-                            pick(candidates);
-                        });
+                        pick(candidates);
                     });
                 });
             });
-        }
 
-        function pick(list) {
+            function pick(list) {
 
-            let best = null;
-            let bestScore = 0;
+                let best = null;
+                let bestScore = 0;
 
-            list.forEach(c => {
+                list.forEach(c => {
 
-                let s = similarity(p.name, c.title);
+                    let s = similarity(parsed.name, c.title);
 
-                if (p.year && c.year && p.year === c.year) s += 0.2;
+                    if (parsed.year && c.year && parsed.year === c.year) s += 0.2;
 
-                s += c.score;
+                    s += c.score;
 
-                if (s > bestScore) {
-                    bestScore = s;
-                    best = c;
+                    if (s > bestScore) {
+                        bestScore = s;
+                        best = c;
+                    }
+                });
+
+                if (best?.imdb) {
+                    return findIMDB(best.imdb, cb);
                 }
-            });
 
-            if (best?.imdb) {
-                return findIMDB(best.imdb, cb);
+                cb(best?.raw || null);
             }
-
-            cb(best?.raw || null);
         }
     }
 
@@ -280,7 +292,7 @@
                         let row = { title: cat, results: [] };
                         parts.push(row);
 
-                        (data[cat] || []).slice(0, 20).forEach(item => {
+                        (data || []).forEach(item => {
 
                             smart(item, res => {
 
