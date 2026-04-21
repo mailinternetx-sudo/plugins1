@@ -1,185 +1,354 @@
-const KP_API_KEY = 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
-const OMDB_API_KEY = '38756ce6';
+(function () {
+    'use strict';
 
-// ---------------- CLEAN ----------------
-function parseItem(str) {
+    const SOURCE_NAME = 'Rutor Pro';
 
-    let year = (str.match(/\((\d{4})\)/) || [])[1] || '';
-    let imdb = (str.match(/tt\d+/) || [])[0] || '';
+    const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
+    const KP_API_KEY = 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
+    const OMDB_API_KEY = '38756ce6';
 
-    let isTV = /\[.*?\]/.test(str);
+    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    let name = str
-        .split('(')[0]
-        .split('[')[0]
-        .replace(/\/.*/, '')
-        .replace(/(CAMRip|TS|WEBRip|HDRip|Trailer|720p|1080p|2160p|x264|HEVC)/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+    const CATEGORIES = [
+        "Топ 24ч",
+        "Зарубежные фильмы",
+        "Наши фильмы",
+        "Зарубежные сериалы",
+        "Наши сериалы",
+        "Телевизор"
+    ];
 
-    return { name, year, imdb, isTV };
-}
+    let cache = {};
+    let queue = [];
+    let active = 0;
+    const MAX = 5;
 
-// ---------------- LEVENSHTEIN ----------------
-function similarity(a, b) {
-    if (!a || !b) return 0;
+    // ---------------- QUEUE ----------------
+    function runQueue() {
+        if (active >= MAX || !queue.length) return;
 
-    a = a.toLowerCase();
-    b = b.toLowerCase();
+        let job = queue.shift();
+        active++;
 
-    let matrix = [];
+        job(() => {
+            active--;
+            runQueue();
+        });
 
-    for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-    for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+        runQueue();
+    }
 
-    for (let i = 1; i <= b.length; i++) {
-        for (let j = 1; j <= a.length; j++) {
-            matrix[i][j] = Math.min(
-                matrix[i - 1][j] + 1,
-                matrix[i][j - 1] + 1,
-                matrix[i - 1][j - 1] + (a[j - 1] === b[i - 1] ? 0 : 1)
-            );
+    function addQueue(fn) {
+        queue.push(fn);
+        runQueue();
+    }
+
+    // ---------------- CACHE ----------------
+    function getCache(key) {
+        if (cache[key]) return cache[key];
+
+        let raw = localStorage.getItem(key);
+        if (!raw) return null;
+
+        try {
+            let data = JSON.parse(raw);
+            if (Date.now() - data.time > 1000 * 60 * 60 * 6) return null;
+            return data.value;
+        } catch {
+            return null;
         }
     }
 
-    return 1 - matrix[b.length][a.length] / Math.max(a.length, b.length);
-}
+    function setCache(key, value) {
+        cache[key] = value;
+        localStorage.setItem(key, JSON.stringify({
+            time: Date.now(),
+            value
+        }));
+    }
 
-// ---------------- KP ----------------
-function searchKP(q, cb) {
-    fetch(`https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(q)}`, {
-        headers: { 'X-API-KEY': KP_API_KEY }
-    })
-        .then(r => r.json())
-        .then(j => cb(j.films?.[0]))
-        .catch(() => cb(null));
-}
+    // ---------------- PARSE ----------------
+    function parseItem(str) {
+        let year = (str.match(/\((\d{4})\)/) || [])[1] || '';
+        let imdb = (str.match(/tt\d+/) || [])[0] || '';
+        let isTV = /\[.*?\]/.test(str);
 
-// ---------------- TMDB ----------------
-function searchTMDB(q, lang, cb) {
-    fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=${lang}`)
-        .then(r => r.json())
-        .then(j => cb(j.results || []))
-        .catch(() => cb([]));
-}
+        let name = str
+            .split('(')[0]
+            .split('[')[0]
+            .replace(/\/.*/, '')
+            .replace(/(CAMRip|TS|WEBRip|HDRip|Trailer|720p|1080p|2160p|x264|HEVC)/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
 
-// ---------------- OMDB ----------------
-function searchOMDB(q, cb) {
-    fetch(`https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&s=${encodeURIComponent(q)}`)
-        .then(r => r.json())
-        .then(j => cb(j.Search || []))
-        .catch(() => cb([]));
-}
+        return { name, year, imdb, isTV };
+    }
 
-// ---------------- FIND BY IMDB ----------------
-function findByIMDB(id, cb) {
-    fetch(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=ru-RU`)
-        .then(r => r.json())
-        .then(j => cb(j.movie_results[0] || j.tv_results[0]))
-        .catch(() => cb(null));
-}
+    // ---------------- SIMILARITY ----------------
+    function similarity(a, b) {
+        if (!a || !b) return 0;
 
-// ---------------- ULTRA SMART ----------------
-function smart(item, cb) {
+        a = a.toLowerCase();
+        b = b.toLowerCase();
 
-    let p = parseItem(item.name);
+        let matrix = [];
 
-    // 1️⃣ IMDb сразу
-    if (p.imdb) {
-        return findByIMDB(p.imdb, res => {
-            if (res) return cb(res);
-            runChain();
+        for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+        for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+
+        for (let i = 1; i <= b.length; i++) {
+            for (let j = 1; j <= a.length; j++) {
+                matrix[i][j] = Math.min(
+                    matrix[i - 1][j] + 1,
+                    matrix[i][j - 1] + 1,
+                    matrix[i - 1][j - 1] + (a[j - 1] === b[i - 1] ? 0 : 1)
+                );
+            }
+        }
+
+        return 1 - matrix[b.length][a.length] / Math.max(a.length, b.length);
+    }
+
+    // ---------------- TMDB ----------------
+    function findIMDB(id, cb) {
+        let key = 'imdb_' + id;
+        let cached = getCache(key);
+        if (cached) return cb(cached);
+
+        addQueue(done => {
+            fetch(`https://api.themoviedb.org/3/find/${id}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=ru-RU`)
+                .then(r => r.json())
+                .then(j => {
+                    let res = j.movie_results[0] || j.tv_results[0];
+                    setCache(key, res);
+                    cb(res);
+                    done();
+                })
+                .catch(() => done());
         });
     }
 
-    runChain();
+    function searchTMDB(q, lang, cb) {
+        addQueue(done => {
+            fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=${lang}`)
+                .then(r => r.json())
+                .then(j => {
+                    cb(j.results || []);
+                    done();
+                })
+                .catch(() => done());
+        });
+    }
 
-    function runChain() {
+    // ---------------- KP ----------------
+    function searchKP(q, cb) {
+        addQueue(done => {
+            fetch(`https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(q)}`, {
+                headers: { 'X-API-KEY': KP_API_KEY }
+            })
+                .then(r => r.json())
+                .then(j => {
+                    cb(j.films?.[0]);
+                    done();
+                })
+                .catch(() => done());
+        });
+    }
 
-        let candidates = [];
+    // ---------------- OMDB ----------------
+    function searchOMDB(q, cb) {
+        addQueue(done => {
+            fetch(`https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&s=${encodeURIComponent(q)}`)
+                .then(r => r.json())
+                .then(j => {
+                    cb(j.Search || []);
+                    done();
+                })
+                .catch(() => done());
+        });
+    }
 
-        // 2️⃣ KP
-        searchKP(p.name, kp => {
-            if (kp) {
-                candidates.push({
-                    title: kp.nameRu || kp.nameEn,
-                    year: kp.year,
-                    score: 0.9,
-                    source: 'kp',
-                    raw: kp
-                });
-            }
+    // ---------------- SMART ----------------
+    function smart(item, cb) {
 
-            // 3️⃣ TMDB RU
-            searchTMDB(p.name, 'ru-RU', tmdbRU => {
+        let p = parseItem(item.name);
 
-                tmdbRU.slice(0,5).forEach(r => {
+        if (p.imdb) {
+            return findIMDB(p.imdb, res => {
+                if (res) return cb(res);
+                chain();
+            });
+        }
+
+        chain();
+
+        function chain() {
+
+            let candidates = [];
+
+            searchKP(p.name, kp => {
+
+                if (kp) {
                     candidates.push({
-                        title: r.title || r.name,
-                        year: (r.release_date || r.first_air_date || '').slice(0,4),
-                        score: 0.8,
-                        raw: r
+                        title: kp.nameRu || kp.nameEn,
+                        year: kp.year,
+                        score: 1,
+                        imdb: kp.imdbId
                     });
-                });
+                }
 
-                // 4️⃣ TMDB EN fallback
-                searchTMDB(p.name, 'en-US', tmdbEN => {
+                searchTMDB(p.name, 'ru-RU', ru => {
 
-                    tmdbEN.slice(0,5).forEach(r => {
+                    ru.slice(0, 5).forEach(r => {
                         candidates.push({
                             title: r.title || r.name,
                             year: (r.release_date || r.first_air_date || '').slice(0,4),
-                            score: 0.7,
+                            score: 0.9,
                             raw: r
                         });
                     });
 
-                    // 5️⃣ OMDb
-                    searchOMDB(p.name, omdb => {
+                    searchTMDB(p.name, 'en-US', en => {
 
-                        omdb.slice(0,5).forEach(r => {
+                        en.slice(0, 5).forEach(r => {
                             candidates.push({
-                                title: r.Title,
-                                year: r.Year,
-                                score: 0.6,
-                                imdb: r.imdbID
+                                title: r.title || r.name,
+                                year: (r.release_date || r.first_air_date || '').slice(0,4),
+                                score: 0.8,
+                                raw: r
                             });
                         });
 
-                        pickBest(candidates);
+                        searchOMDB(p.name, omdb => {
+
+                            omdb.slice(0, 5).forEach(r => {
+                                candidates.push({
+                                    title: r.Title,
+                                    year: r.Year,
+                                    score: 0.7,
+                                    imdb: r.imdbID
+                                });
+                            });
+
+                            pick(candidates);
+                        });
                     });
-
                 });
-
             });
-
-        });
-    }
-
-    function pickBest(list) {
-
-        let best = null;
-        let bestScore = 0;
-
-        list.forEach(c => {
-
-            let s = similarity(p.name, c.title);
-
-            if (p.year && c.year && p.year === c.year) s += 0.2;
-
-            s += c.score;
-
-            if (s > bestScore) {
-                bestScore = s;
-                best = c;
-            }
-        });
-
-        // если нашли imdb → финальный точный матч
-        if (best?.imdb) {
-            return findByIMDB(best.imdb, cb);
         }
 
-        cb(best?.raw || null);
+        function pick(list) {
+
+            let best = null;
+            let bestScore = 0;
+
+            list.forEach(c => {
+
+                let s = similarity(p.name, c.title);
+
+                if (p.year && c.year && p.year === c.year) s += 0.2;
+
+                s += c.score;
+
+                if (s > bestScore) {
+                    bestScore = s;
+                    best = c;
+                }
+            });
+
+            if (best?.imdb) {
+                return findIMDB(best.imdb, cb);
+            }
+
+            cb(best?.raw || null);
+        }
     }
-}
+
+    // ---------------- API ----------------
+    function RutorApi() {
+
+        this.category = function (params, onSuccess, onError) {
+
+            fetch(PROXY)
+                .then(r => r.json())
+                .then(data => {
+
+                    let parts = [];
+
+                    CATEGORIES.forEach(cat => {
+
+                        let row = { title: cat, results: [] };
+                        parts.push(row);
+
+                        (data[cat] || []).slice(0, 20).forEach(item => {
+
+                            smart(item, res => {
+
+                                if (!res) return;
+
+                                row.results.push({
+                                    id: res.id,
+                                    title: res.title || res.name,
+                                    original_title: res.original_title || res.original_name,
+                                    poster_path: res.poster_path,
+                                    backdrop_path: res.backdrop_path,
+                                    overview: res.overview,
+                                    vote_average: res.vote_average,
+                                    type: res.media_type
+                                });
+
+                                if (row.update) row.update();
+
+                            });
+
+                        });
+
+                    });
+
+                    onSuccess(parts);
+
+                })
+                .catch(onError);
+        };
+
+        this.full = function (params, onSuccess, onError) {
+            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+        };
+    }
+
+    // ---------------- INIT ----------------
+    function start() {
+
+        let api = new RutorApi();
+
+        Lampa.Api.sources.rutorpro = api;
+
+        Object.defineProperty(Lampa.Api.sources, SOURCE_NAME, {
+            get: () => api
+        });
+
+        Lampa.Listener.follow('menu', function (e) {
+            if (e.type === 'render') {
+                e.items.push({
+                    title: SOURCE_NAME,
+                    icon: '🔥',
+                    onSelect: function () {
+                        Lampa.Activity.push({
+                            title: SOURCE_NAME,
+                            component: 'category',
+                            source: SOURCE_NAME
+                        });
+                    }
+                });
+            }
+        });
+    }
+
+    if (window.appready) start();
+    else {
+        Lampa.Listener.follow('app', e => {
+            if (e.type === 'ready') start();
+        });
+    }
+
+})();
