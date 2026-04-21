@@ -5,12 +5,12 @@
     const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
     const categories = [
-        "Топ 24ч",
-        "Зарубежные фильмы",
-        "Наши фильмы",
-        "Зарубежные сериалы",
-        "Наши сериалы",
-        "Телевизор"
+        { title: "Топ 24ч" },
+        { title: "Зарубежные фильмы" },
+        { title: "Наши фильмы" },
+        { title: "Зарубежные сериалы" },
+        { title: "Наши сериалы" },
+        { title: "Телевизор" }
     ];
 
     let cache = {};
@@ -45,10 +45,13 @@
         let local = localStorage.getItem(key);
         if (!local) return null;
 
-        let data = JSON.parse(local);
-        if (Date.now() - data.time > 1000 * 60 * 20) return null;
-
-        return data.value;
+        try {
+            let data = JSON.parse(local);
+            if (Date.now() - data.time > 1000 * 60 * 20) return null;
+            return data.value;
+        } catch (e) {
+            return null;
+        }
     }
 
     function setCache(key, value) {
@@ -94,7 +97,10 @@
 
                     done();
                 })
-                .catch(() => done());
+                .catch(e => {
+                    console.log('TMDB ERROR:', e);
+                    done();
+                });
         });
     }
 
@@ -131,6 +137,14 @@
 
     // ---------------- LOAD CATEGORY ----------------
     function load(category) {
+
+        if (!category || typeof category !== 'string') {
+            console.log('BAD CATEGORY:', category);
+            return;
+        }
+
+        console.log('LOAD CATEGORY:', category);
+
         Lampa.Activity.push({
             title: category,
             component: 'category_full',
@@ -142,10 +156,13 @@
             .then(r => r.json())
             .then(list => {
 
+                console.log('RUTOR DATA:', list);
+
                 let seen = new Set();
 
                 list.slice(0, 40).forEach(item => {
 
+                    if (!item || !item.name) return;
                     if (item.name.includes('XXX')) return;
 
                     smart(item, (res) => {
@@ -159,27 +176,39 @@
 
                 });
 
-            });
+            })
+            .catch(e => console.log('FETCH ERROR:', e));
     }
 
     // ---------------- UI ----------------
     function init() {
+        console.log('PLUGIN INIT');
+
         Lampa.Menu.add({
             title: 'Rutor Pro',
             icon: '🔥',
+            component: 'category',
             onSelect: function () {
+                console.log('OPEN CATEGORIES');
+
                 Lampa.Select.show({
                     title: 'Категории',
                     items: categories,
-                    onSelect: load
+                    onSelect: function (item) {
+                        console.log('SELECTED:', item);
+                        load(item.title);
+                    }
                 });
             }
         });
     }
 
+    // ---------------- START ----------------
     if (window.appready) init();
-    else Lampa.Listener.follow('app', e => {
-        if (e.type === 'ready') init();
-    });
+    else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') init();
+        });
+    }
 
 })();
