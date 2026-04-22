@@ -5,10 +5,25 @@ const SOURCE = 'Rutor Pro';
 const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
 
-// ---------------- CLEAN SEARCH ----------------
-function cleanSearchQuery(q){
+// ---------------- EXTRACT LOGIC ----------------
+function extractSmart(q){
   if(!q) return '';
-  return q.split('/')[0].trim(); // 🔥 ДО /
+
+  // 🔥 если есть /
+  if(q.includes('/')){
+    let part = q.split('/')[1] || '';
+    part = part.split('[')[0];
+    return part.trim();
+  }
+
+  // 🔥 если нет / → вернуть как есть (но без мусора)
+  return q.split('[')[0].trim();
+}
+
+// ---------------- REMOVE YEAR ----------------
+function removeYear(q){
+  if(!q) return '';
+  return q.replace(/\(\d{4}\)/,'').trim();
 }
 
 // ---------------- TYPE DETECT ----------------
@@ -38,7 +53,7 @@ async function tmdbSearch(query, type){
 async function search(item){
 
   let queries = [
-    cleanSearchQuery(item.search), // 🔥 главный
+    removeYear(extractSmart(item.search)), // 🔥 умный разбор
     item.alt,
     item.title
   ].filter(Boolean);
