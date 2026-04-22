@@ -4,29 +4,10 @@
 const SOURCE = 'Rutor Pro';
 const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 const TMDB = 'https://api.themoviedb.org/3/search/multi?api_key=f348b4586d1791a40d99edd92164cb86&query=';
-const OMDB = 'https://www.omdbapi.com/?apikey=38756ce6&s=';
-const KP = 'https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=';
-const KP_KEY = 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
 
-let cache = {};
 let queue = [];
 let active = 0;
 const MAX = 5;
-
-// ---------------- CACHE ----------------
-function getCache(k) {
-  if (cache[k]) return cache[k];
-  let raw = localStorage.getItem(k);
-  if (!raw) return null;
-  let data = JSON.parse(raw);
-  if (Date.now() - data.time > 1000*60*60*6) return null;
-  return data.value;
-}
-
-function setCache(k,v){
-  cache[k]=v;
-  localStorage.setItem(k,JSON.stringify({time:Date.now(),value:v}));
-}
 
 // ---------------- QUEUE ----------------
 function run(){
@@ -41,118 +22,67 @@ function add(fn){queue.push(fn);run();}
 // ---------------- SEARCH ----------------
 function search(item,cb){
 
-  let key = item.title + item.year;
-  let c = getCache(key);
-  if(c) return cb(c);
-
   add(done=>{
+    fetch(TMDB + encodeURIComponent(item.title))
+      .then(r=>r.json())
+      .then(j=>{
+        let r = (j.results||[])[0];
+        if(!r) return done();
 
-    if(item.lang==='ru') return searchKP(item,cb,done);
+        cb({
+          id:r.id,
+          title:r.title||r.name,
+          poster_path:r.poster_path,
+          backdrop_path:r.backdrop_path,
+          type:r.media_type
+        });
 
-    searchTMDB(item,(res)=>{
-      if(res) return finish(res);
-      searchOMDB(item,finish);
-    });
-
-    function finish(res){
-      setCache(key,res);
-      cb(res);
-      done();
-    }
-
+        done();
+      })
+      .catch(()=>done());
   });
-}
-
-// ---------------- KP ----------------
-function searchKP(item,cb,done){
-
-  fetch(KP + encodeURIComponent(item.title), {
-    headers:{'X-API-KEY':KP_KEY}
-  })
-  .then(r=>r.json())
-  .then(j=>{
-    let f = (j.films||[])[0];
-    if(!f) return done();
-
-    cb({
-      id:f.filmId,
-      title:f.nameRu,
-      poster_path:f.posterUrlPreview,
-      backdrop_path:f.posterUrl,
-      type:f.type==='TV_SERIES'?'tv':'movie'
-    });
-
-    done();
-  }).catch(()=>done());
-}
-
-// ---------------- TMDB ----------------
-function searchTMDB(item,cb){
-  fetch(TMDB+encodeURIComponent(item.title))
-  .then(r=>r.json())
-  .then(j=>{
-    let r = (j.results||[])[0];
-    if(!r) return cb(null);
-
-    cb({
-      id:r.id,
-      title:r.title||r.name,
-      poster_path:r.poster_path,
-      backdrop_path:r.backdrop_path,
-      type:r.media_type
-    });
-  }).catch(()=>cb(null));
-}
-
-// ---------------- OMDB ----------------
-function searchOMDB(item,cb){
-  fetch(OMDB+encodeURIComponent(item.title))
-  .then(r=>r.json())
-  .then(j=>{
-    let r = (j.Search||[])[0];
-    if(!r) return cb(null);
-
-    cb({
-      id:r.imdbID,
-      title:r.Title,
-      poster_path:r.Poster,
-      type:r.Type==='series'?'tv':'movie'
-    });
-  }).catch(()=>cb(null));
 }
 
 // ---------------- API ----------------
 function Api(){
 
-  this.category = function (p, ok, err){
+  this.category = function (params, onSuccess, onError){
 
-    fetch(PROXY+'?v='+Date.now())
+    fetch(PROXY + '?v=' + Date.now())
     .then(r=>r.json())
     .then(data=>{
 
-      let parts=[];
+      let parts = [];
 
       Object.keys(data).forEach(cat=>{
 
-        let row={title:cat,results:[]};
+        let row = {
+          title: cat,
+          results: [],
+          type: 'line'
+        };
+
         parts.push(row);
 
-        (data[cat]||[]).forEach(item=>{
+        (data[cat] || []).slice(0,30).forEach(item=>{
 
           search(item,res=>{
-            if(!res)return;
+            if(!res) return;
 
             row.results.push(res);
-            if(row.update) row.update();
+
+            // 💥 КЛЮЧЕВОЙ ФИКС
+            if (row.update) row.update();
           });
 
         });
 
       });
 
-      ok(parts);
+      onSuccess(parts);
 
-    }).catch(err);
+    })
+    .catch(onError);
   };
 
   this.full = function(p,s,e){
@@ -171,14 +101,22 @@ function start(){
     get:()=>api
   });
 
-  // 💥 кнопка (фикс)
-  setTimeout(()=>{
-    let menu=document.querySelector('.menu__list');
-    if(!menu) return;
+  // 💥 кнопка (жёсткий фикс)
+  function addBtn(){
+
+    let menu = document.querySelector('.menu .menu__list');
+    if(!menu) return setTimeout(addBtn,500);
+
+    if(document.querySelector('[data-rutor]')) return;
 
     let li=document.createElement('li');
     li.className='menu__item selector';
-    li.innerHTML='<div class="menu__ico">🔥</div><div class="menu__text">'+SOURCE+'</div>';
+    li.setAttribute('data-rutor','1');
+
+    li.innerHTML = `
+      <div class="menu__ico">🔥</div>
+      <div class="menu__text">${SOURCE}</div>
+    `;
 
     li.addEventListener('hover:enter',()=>{
       Lampa.Activity.push({
@@ -189,8 +127,9 @@ function start(){
     });
 
     menu.appendChild(li);
+  }
 
-  },1000);
+  addBtn();
 }
 
 if(window.appready) start();
