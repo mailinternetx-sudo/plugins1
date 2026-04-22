@@ -1,99 +1,108 @@
-(function () {
-  'use strict';
-
+(function(){
   const SOURCE = 'Rutor Pro';
-  const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/'; // замените на свой URL
-  const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
+  const PROXY = 'https://ваш-worker.workers.dev/'; // сюда ваш URL
+  const TMDB_KEY = 'f348b4586d1791a40d99edd92164cb86';
 
-  // очередь для ограничения параллельных запросов (оставляем как есть)
-  let q = [], a = 0, MAX = 5;
-  function run() { if (a >= MAX || !q.length) return; let j = q.shift(); a++; j(() => { a--; run(); }); run(); }
-  function add(fn) { q.push(fn); run(); }
+  let queue = [], running = 0, MAX = 3;
+  function addTask(task) {
+    queue.push(task);
+    runQueue();
+  }
+  function runQueue() {
+    if (running >= MAX || queue.length === 0) return;
+    running++;
+    let task = queue.shift();
+    task(() => { running--; runQueue(); });
+    runQueue();
+  }
 
-  // ---- поиск через TMDB (единый для всех) ----
-  function search(item, cb) {
+  function searchTMDB(item, callback) {
     let query = item.alt || item.title;
-    add(done => {
-      fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`)
+    addTask(done => {
+      fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${encodeURIComponent(query)}`)
         .then(r => r.json())
-        .then(j => {
-          let r = (j.results || [])[0];
-          if (!r) return done();
-          cb({
-            id: r.id,
-            title: r.title || r.name,
-            poster_path: r.poster_path ? 'https://image.tmdb.org/t/p/w500' + r.poster_path : '',
-            backdrop_path: r.backdrop_path ? 'https://image.tmdb.org/t/p/w780' + r.backdrop_path : '',
-            type: r.media_type
-          });
+        .then(data => {
+          let first = data.results?.[0];
+          if (first) {
+            callback({
+              id: first.id,
+              title: first.title || first.name,
+              poster_path: first.poster_path ? 'https://image.tmdb.org/t/p/w500'+first.poster_path : '',
+              backdrop_path: first.backdrop_path ? 'https://image.tmdb.org/t/p/w780'+first.backdrop_path : '',
+              type: first.media_type || (first.first_air_date ? 'tv' : 'movie')
+            });
+          } else callback(null);
           done();
         })
-        .catch(() => done());
+        .catch(e => { console.error(e); callback(null); done(); });
     });
   }
 
-  // ---- API для Lampa ----
   function Api() {
-    this.category = function (params, onSuccess, onError) {
+    this.category = function(params, onSuccess, onError) {
       fetch(PROXY)
         .then(r => r.json())
-        .then(data => {
+        .then(categories => {
           let parts = [];
-          let allPromises = [];
+          let categoryTasks = [];
 
-          Object.keys(data).forEach(cat => {
-            let row = { title: cat, results: [], type: 'line' };
+          for (let catName in categories) {
+            let row = { title: catName, results: [], type: 'line' };
             parts.push(row);
-
-            let items = data[cat] || [];
-            let catPromises = items.slice(0, 30).map(item => {
+            let items = categories[catName].slice(0, 30);
+            let itemTasks = items.map(item => {
               return new Promise(resolve => {
-                search(item, res => {
-                  if (res) {
-                    res.poster_path = res.poster_path || '/img/img_broken.svg';
-                    row.results.push(res);
-                  }
+                searchTMDB(item, card => {
+                  if (card) row.results.push(card);
                   resolve();
                 });
               });
             });
-            allPromises.push(...catPromises);
-          });
+            categoryTasks.push(...itemTasks);
+          }
 
-          Promise.all(allPromises).then(() => onSuccess(parts));
+          Promise.all(categoryTasks).then(() => onSuccess(parts));
         })
         .catch(onError);
     };
-
-    // полная информация через TMDB (работает, т.к. id всегда от TMDB)
-    this.full = function (item, onSuccess, onError) {
+    this.full = function(item, onSuccess, onError) {
       Lampa.Api.sources.tmdb.full(item, onSuccess, onError);
     };
   }
 
-  // ---- добавление кнопки в меню ----
-  function start() {
-    let api = new Api();
-    Lampa.Api.sources.rutorpro = api;
-    Object.defineProperty(Lampa.Api.sources, SOURCE, { get: () => api });
-
-    function btn() {
-      let m = document.querySelector('.menu .menu__list');
-      if (!m) return setTimeout(btn, 500);
-      if (document.querySelector('[data-rutor]')) return;
-
-      let li = document.createElement('li');
-      li.className = 'menu__item selector';
-      li.setAttribute('data-rutor', '1');
-      li.innerHTML = `<div class="menu__ico">🔥</div><div class="menu__text">${SOURCE}</div>`;
-      li.addEventListener('hover:enter', () => {
-        Lampa.Activity.push({ component: 'category', source: SOURCE, title: SOURCE });
-      });
-      m.appendChild(li);
-    }
-    btn();
+  function addMenuButton() {
+    let checkExist = setInterval(() => {
+      let menu = document.querySelector('.menu .menu__list');
+      if (menu && !document.querySelector('[data-rutor-pro]')) {
+        clearInterval(checkExist);
+        let li = document.createElement('li');
+        li.className = 'menu__item selector';
+        li.setAttribute('data-rutor-pro', '1');
+        li.innerHTML = '<div class="menu__ico">🔥</div><div class="menu__text">Rutor Pro</div>';
+        li.addEventListener('hover:enter', () => {
+          Lampa.Activity.push({
+            component: 'category',
+            source: SOURCE,
+            title: SOURCE
+          });
+        });
+        menu.appendChild(li);
+      }
+    }, 500);
   }
 
-  if (window.appready) start();
-  else Lampa.Listener.follow('app', e => { if (e.type === 'ready') start(); });
+  function init() {
+    Lampa.Api.sources[SOURCE] = new Api();
+    addMenuButton();
+  }
+
+  if (window.Lampa && Lampa.Listener) {
+    if (Lampa.Listener.follow) {
+      Lampa.Listener.follow('app', e => { if (e.type === 'ready') init(); });
+    } else {
+      setTimeout(init, 1000);
+    }
+  } else {
+    setTimeout(init, 1000);
+  }
 })();
