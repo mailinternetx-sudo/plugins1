@@ -5,52 +5,50 @@ const SOURCE = 'Rutor Pro';
 const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
 
-// ---------- HELPERS ----------
-function norm(s){ return (s||'').toLowerCase().replace(/[^a-zа-я0-9]/gi,''); }
-
-function score(a,b,y1,y2){
-  a = norm(a); b = norm(b);
-  if(a===b) return 100;
-
-  let same=0;
-  for(let i=0;i<Math.min(a.length,b.length);i++){
-    if(a[i]===b[i]) same++;
-  }
-
-  let s = same/Math.max(a.length,b.length)*100;
-  if(y1 && y2 && y1===y2) s+=30;
-
-  return s;
+// ---------- NORMALIZE ----------
+function norm(s){
+  return (s||'').toLowerCase().replace(/[^a-zа-я0-9]/gi,'');
 }
 
-// ---------- TMDB SEARCH ----------
+// ---------- TMDB ----------
 function tmdb(q){
   return fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=ru-RU`)
-  .then(r=>r.json())
-  .then(j=>j.results||[])
-  .catch(()=>[]);
+    .then(r=>r.json())
+    .then(j=>j.results||[])
+    .catch(()=>[]);
 }
 
 // ---------- SEARCH ----------
 async function search(item){
 
-  let isRU = !item.alt;
-  let query = isRU ? item.title : item.alt;
+  let query = item.alt || item.title;
+  let year = item.year;
 
-  let list = await tmdb(query);
+  let results = await tmdb(query);
+  if(!results.length) return null;
 
-  if(!list.length) return null;
+  // 🔥 ТОЧНЫЙ ФИЛЬТР
+  let filtered = results.filter(r => {
 
-  let best = list
-    .map(r=>({
-      ...r,
-      score: score(item.title, r.title||r.name, item.year, (r.release_date||r.first_air_date||'').slice(0,4))
-    }))
-    .sort((a,b)=>b.score-a.score)[0];
+    let title = (r.title || r.name || '').toLowerCase();
+    let original = (r.original_title || r.original_name || '').toLowerCase();
 
-  if(!best || best.score < 40) return null;
+    let target = item.title.toLowerCase();
 
-  // 🔥 ВАЖНО: TMDB формат (фикс открытия)
+    let y = (r.release_date || r.first_air_date || '').slice(0,4);
+
+    let matchTitle =
+      title.includes(target) ||
+      original.includes(target);
+
+    let matchYear = !year || y === year;
+
+    return matchTitle && matchYear;
+  });
+
+  let best = filtered[0] || results[0];
+  if(!best) return null;
+
   return {
     id: best.id,
     title: best.title || best.name,
@@ -72,6 +70,7 @@ function Api(){
 
   this.category = async function (params, onSuccess, onError){
     try{
+
       let data = await fetch(PROXY+'?v='+Date.now()).then(r=>r.json());
 
       let parts = [];
@@ -82,10 +81,10 @@ function Api(){
         parts.push(row);
 
         let results = await Promise.all(
-          data[cat].slice(0,30).map(search)
+          (data[cat]||[]).slice(0,30).map(search)
         );
 
-        // анти-дубликаты
+        // 🔥 анти-дубликаты
         let seen = new Set();
 
         row.results = results
@@ -120,9 +119,9 @@ function start(){
     get:()=>api
   });
 
-  function btn(){
+  function addBtn(){
     let menu = document.querySelector('.menu .menu__list');
-    if(!menu) return setTimeout(btn,500);
+    if(!menu) return setTimeout(addBtn,500);
 
     if(document.querySelector('[data-rutor]')) return;
 
@@ -143,7 +142,7 @@ function start(){
     menu.appendChild(li);
   }
 
-  btn();
+  addBtn();
 }
 
 if(window.appready) start();
