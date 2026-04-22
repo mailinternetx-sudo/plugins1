@@ -1,164 +1,380 @@
 (function(){
 'use strict';
 
-const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
-const OMDB_API_KEY = "38756ce6";
-const KP_API_KEY   = "JVGPMHQ-40AMAHD-MG87Z21-R490RWA";
-const PROXY = "https://my-proxy-worker.mail-internetx.workers.dev/";
+/** ================== CONFIG ================== **/
+const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
+const OMDB_API_KEY = '38756ce6';
+const KP_API_KEY   = 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
+const PROXY        = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-let cache = {};
+// лимиты параллельности (важно для webOS)
+const MAX_CONCURRENT = 5;
+const CACHE_TTL = 1000 * 60 * 30; // 30 минут
 
-// ---------------- UTILS ----------------
-function levenshtein(a,b){
-  if(!a || !b) return 0;
-  const matrix = [];
-  for(let i=0;i<=b.length;i++){matrix[i]=[i];}
-  for(let j=0;j<=a.length;j++){matrix[0][j]=j;}
+/** ================== CACHE ================== **/
+const mem = {};
+function getCache(key){
+  const m = mem[key];
+  if(m && (Date.now() - m.t) < CACHE_TTL) return m.v;
+
+  try{
+    const raw = localStorage.getItem(key);
+    if(!raw) return null;
+    const j = JSON.parse(raw);
+    if((Date.now() - j.t) > CACHE_TTL) return null;
+    mem[key] = j;
+    return j.v;
+  }catch(e){ return null; }
+}
+function setCache(key, val){
+  const rec = { t: Date.now(), v: val };
+  mem[key] = rec;
+  try{ localStorage.setItem(key, JSON.stringify(rec)); }catch(e){}
+}
+
+/** ================== QUEUE ================== **/
+let q = [], active = 0;
+function runQ(){
+  if(active >= MAX_CONCURRENT || !q.length) return;
+  const job = q.shift();
+  active++;
+  job(()=>{ active--; runQ(); });
+  runQ();
+}
+function enqueue(fn){ q.push(fn); runQ(); }
+
+/** ================== NORMALIZE ================== **/
+function norm(s){
+  return (s||'')
+    .toLowerCase()
+    .replace(/ё/g,'е')
+    .replace(/&nbsp;/g,' ')
+    .replace(/[^\wа-я0-9\s]/gi,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+function baseTitle(s){
+  return (s||'')
+    .split('(')[0]
+    .split('[')[0]
+    .trim();
+}
+function isCyrillicStart(s){
+  return /^[а-яё]/i.test((s||'').trim());
+}
+
+/** ================== LEVENSHTEIN SCORE ================== **/
+function lev(a,b){
+  if(!a||!b) return 0;
+  const m = Array.from({length:b.length+1},(_,i)=>[i]);
+  for(let j=0;j<=a.length;j++) m[0][j]=j;
   for(let i=1;i<=b.length;i++){
     for(let j=1;j<=a.length;j++){
-      matrix[i][j]=b.charAt(i-1)==a.charAt(j-1)
-        ? matrix[i-1][j-1]
-        : Math.min(matrix[i-1][j-1]+1,matrix[i][j-1]+1,matrix[i-1][j]+1);
+      m[i][j] = b[i-1]===a[j-1]
+        ? m[i-1][j-1]
+        : Math.min(m[i-1][j-1]+1, m[i][j-1]+1, m[i-1][j]+1);
     }
   }
-  return matrix[b.length][a.length];
+  return m[b.length][a.length];
+}
+function sim(a,b){
+  a = norm(a); b = norm(b);
+  if(!a || !b) return 0;
+  const d = lev(a,b);
+  return 1 - d / Math.max(a.length, b.length);
 }
 
-function score(a,b){
-  a=a.toLowerCase(); b=b.toLowerCase();
-  return 1 - (levenshtein(a,b) / Math.max(a.length,b.length));
+/** ================== DETECT TYPE ================== **/
+function detectTV(item){
+  const t = (item.search || item.title || '') + ' ' + (item.alt||'');
+  const text = t.toLowerCase();
+  return (
+    item.is_tv === true ||
+    /сериал/i.test(text) ||
+    /\bseason\b/i.test(text) ||
+    /\[s\d+/i.test(text) ||
+    /\d+\s*сер/i.test(text)
+  );
 }
 
-// ---------------- TMDB ----------------
-async function tmdb(query,type){
-  let url = `https://api.themoviedb.org/3/search/${type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru`;
-  let r = await fetch(url).then(r=>r.json());
-  return r.results || [];
+/** ================== API: TMDB ================== **/
+function tmdbSearch(query, type, cb){
+  const key = `tmdb_${type}_${query}`;
+  const c = getCache(key);
+  if(c) return cb(c);
+
+  enqueue(done=>{
+    fetch(`https://api.themoviedb.org/3/search/${type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru`)
+      .then(r=>r.json())
+      .then(j=>{
+        const res = j.results || [];
+        setCache(key, res);
+        cb(res);
+        done();
+      })
+      .catch(()=>{ cb([]); done(); });
+  });
 }
 
-// ---------------- OMDB ----------------
-async function omdb(query){
-  let url = `https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&s=${encodeURIComponent(query)}`;
-  let r = await fetch(url).then(r=>r.json());
-  return r.Search || [];
+// если у тебя позже появится imdbID из worker — включишь это:
+function tmdbFindByImdb(imdbId, cb){
+  const key = `tmdb_find_${imdbId}`;
+  const c = getCache(key);
+  if(c) return cb(c);
+
+  enqueue(done=>{
+    fetch(`https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=ru`)
+      .then(r=>r.json())
+      .then(j=>{
+        const all = []
+          .concat(j.movie_results||[])
+          .concat(j.tv_results||[]);
+        setCache(key, all);
+        cb(all);
+        done();
+      })
+      .catch(()=>{ cb([]); done(); });
+  });
 }
 
-// ---------------- KINOPOISK ----------------
-async function kp(query){
-  let url = `https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(query)}`;
-  let r = await fetch(url,{
-    headers:{ 'X-API-KEY': KP_API_KEY }
-  }).then(r=>r.json());
+/** ================== API: OMDb ================== **/
+function omdbSearch(query, cb){
+  const key = `omdb_${query}`;
+  const c = getCache(key);
+  if(c) return cb(c);
 
-  return (r.films || []).map(i=>({
-    id: i.filmId,
-    title: i.nameRu || i.nameEn,
-    original_title: i.nameEn,
-    poster_path: i.posterUrlPreview,
-    backdrop_path: i.posterUrl,
-    vote_average: i.rating,
-    media_type: i.type === 'TV_SERIES' ? 'tv' : 'movie'
-  }));
+  enqueue(done=>{
+    fetch(`https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&s=${encodeURIComponent(query)}`)
+      .then(r=>r.json())
+      .then(j=>{
+        const res = j.Search || [];
+        setCache(key, res);
+        cb(res);
+        done();
+      })
+      .catch(()=>{ cb([]); done(); });
+  });
 }
 
-// ---------------- MAIN SEARCH ----------------
-async function multiSearch(item){
+/** ================== API: KINOPOISK ================== **/
+function kpSearch(query, cb){
+  const key = `kp_${query}`;
+  const c = getCache(key);
+  if(c) return cb(c);
 
-  let queries = [
-    item.search,
-    item.alt,
-    item.title
-  ].filter(Boolean);
+  enqueue(done=>{
+    fetch(`https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(query)}`, {
+      headers: { 'X-API-KEY': KP_API_KEY }
+    })
+    .then(r=>r.json())
+    .then(j=>{
+      const res = (j.films || []).map(i=>({
+        id: i.filmId,
+        title: i.nameRu || i.nameEn,
+        name: i.nameRu || i.nameEn,
+        original_title: i.nameEn,
+        poster_path: i.posterUrlPreview,
+        backdrop_path: i.posterUrl,
+        vote_average: parseFloat(i.rating) || 0,
+        media_type: i.type === 'TV_SERIES' ? 'tv' : 'movie',
+        _src: 'kp'
+      }));
+      setCache(key, res);
+      cb(res);
+      done();
+    })
+    .catch(()=>{ cb([]); done(); });
+  });
+}
 
-  let isTV = item.is_tv;
+/** ================== PICK BEST ================== **/
+function pickBest(list, item, wantTV){
+  if(!list || !list.length) return null;
 
-  for(let q of queries){
+  const target = baseTitle(item.title || item.search || '');
+  const year = item.year;
 
-    // 1️⃣ Kinopoisk (если кириллица)
-    if(/^[а-яё]/i.test(q)){
-      let r = await kp(q);
-      if(r.length) return r[0];
+  let best = null;
+  let bestScore = -1;
+
+  list.forEach(r=>{
+    const t = r.title || r.name || '';
+    const s = sim(t, target);
+
+    let score = s * 100;
+
+    // тип
+    const isTV = (r.media_type === 'tv') || !!r.first_air_date;
+    if(wantTV === isTV) score += 10;
+
+    // год
+    if(year){
+      const y = (r.release_date || r.first_air_date || '').slice(0,4);
+      if(y === year) score += 15;
     }
 
-    // 2️⃣ TMDB
-    let tm = await tmdb(q, isTV ? 'tv':'movie');
-    if(!tm.length) tm = await tmdb(q, isTV ? 'movie':'tv');
+    // популярность/рейтинг
+    if(r.vote_average) score += Math.min(10, r.vote_average);
 
-    if(tm.length){
-      return normalize(tm[0], isTV);
+    if(score > bestScore){
+      bestScore = score;
+      best = r;
     }
+  });
 
-    // 3️⃣ OMDB fallback
-    let om = await omdb(q);
-    if(om.length){
-      return {
-        id: om[0].imdbID,
-        title: om[0].Title,
-        poster_path: om[0].Poster,
-        media_type: om[0].Type === 'series' ? 'tv' : 'movie'
-      };
-    }
-  }
-
-  return null;
+  return best;
 }
 
-// ---------------- NORMALIZE ----------------
-function normalize(r,isTV){
+/** ================== NORMALIZE CARD ================== **/
+function toCard(r, forceTV){
+  const isTV = forceTV || (r.media_type === 'tv') || !!r.first_air_date;
+
   return {
     id: r.id,
     title: r.title || r.name,
     name: r.title || r.name,
-    original_title: r.original_title || r.original_name,
-    poster_path: r.poster_path,
-    backdrop_path: r.backdrop_path,
-    overview: r.overview,
-    vote_average: r.vote_average,
-    media_type: isTV ? 'tv':'movie',
+    original_title: r.original_title || r.original_name || '',
+    poster_path: r.poster_path || '',
+    backdrop_path: r.backdrop_path || '',
+    overview: r.overview || '',
+    vote_average: r.vote_average || 0,
+    media_type: isTV ? 'tv' : 'movie',
     release_date: r.release_date,
-    first_air_date: r.first_air_date
+    first_air_date: r.first_air_date,
+    source: 'tmdb'
   };
 }
 
-// ---------------- UI ----------------
+/** ================== MULTI-STAGE SEARCH ================== **/
+function multiSearch(item, done){
+
+  const wantTV = detectTV(item);
+
+  // очередность запросов (Filmix-style)
+  const queries = [
+    item.search,     // самый точный (с [S01])
+    item.alt,        // EN
+    item.title       // fallback
+  ].filter(Boolean);
+
+  function tryQuery(i){
+    if(i >= queries.length) return done(null);
+
+    const q = queries[i];
+    const key = `final_${q}_${item.year}_${wantTV}`;
+    const cached = getCache(key);
+    if(cached) return done(cached);
+
+    // 1) Kinopoisk (если кириллица)
+    if(isCyrillicStart(q)){
+      kpSearch(q, (kpRes)=>{
+        const best = pickBest(kpRes, item, wantTV);
+        if(best){
+          const card = toCard(best, wantTV);
+          setCache(key, card);
+          return done(card);
+        }
+        // дальше
+        tmdbStage(q);
+      });
+    } else {
+      tmdbStage(q);
+    }
+
+    function tmdbStage(q){
+      // 2) TMDB (приоритет по типу)
+      tmdbSearch(q, wantTV ? 'tv':'movie', (r1)=>{
+        if(r1 && r1.length){
+          const best = pickBest(r1, item, wantTV);
+          if(best){
+            const card = toCard(best, wantTV);
+            setCache(key, card);
+            return done(card);
+          }
+        }
+        // fallback тип
+        tmdbSearch(q, wantTV ? 'movie':'tv', (r2)=>{
+          if(r2 && r2.length){
+            const best = pickBest(r2, item, wantTV);
+            if(best){
+              const card = toCard(best, wantTV);
+              setCache(key, card);
+              return done(card);
+            }
+          }
+          // 3) OMDb
+          omdbSearch(q, (om)=>{
+            if(om && om.length){
+              const o = om[0];
+              const card = {
+                id: o.imdbID,
+                title: o.Title,
+                name: o.Title,
+                original_title: o.Title,
+                poster_path: o.Poster && o.Poster !== 'N/A' ? o.Poster : '',
+                backdrop_path: '',
+                overview: '',
+                vote_average: 0,
+                media_type: o.Type === 'series' ? 'tv' : 'movie',
+                release_date: o.Year,
+                source: 'omdb'
+              };
+              setCache(key, card);
+              return done(card);
+            }
+            // следующий вариант запроса
+            tryQuery(i+1);
+          });
+        });
+      });
+    }
+  }
+
+  tryQuery(0);
+}
+
+/** ================== LOAD CATEGORY ================== **/
 function loadCategory(name){
 
   Lampa.Activity.push({
     title: name,
     component: 'category_full',
-    results: []
+    results: [],
+    page: 1
   });
 
   fetch(PROXY)
     .then(r=>r.json())
-    .then(async data=>{
+    .then(list=>{
 
-      let list = data[name] || [];
-      let seen = new Set();
+      const items = (list && list[name]) ? list[name] : [];
+      const seen = new Set();
 
-      for(let item of list){
+      items.slice(0, 60).forEach(item=>{
+        // фильтр мусора
+        if(!item || !item.title) return;
 
-        let res = await multiSearch(item);
-        if(!res) continue;
+        multiSearch(item, (card)=>{
+          if(!card || !card.id) return;
+          if(seen.has(card.id)) return;
 
-        if(seen.has(res.id)) continue;
-        seen.add(res.id);
-
-        Lampa.Activity.active().append([res]);
-      }
+          seen.add(card.id);
+          Lampa.Activity.active().append([card]);
+        });
+      });
 
     });
 }
 
-// ---------------- START ----------------
+/** ================== MENU / START ================== **/
 function start(){
 
-  let btn = $('<li class="menu__item selector"><div class="menu__text">Rutor ULTRA</div></li>');
+  const ICON = '🔥';
 
-  $('.menu .menu__list').eq(0).append(btn);
+  const item = $('<li class="menu__item selector"><div class="menu__ico">'+ICON+'</div><div class="menu__text">Rutor ULTRA</div></li>');
+  $('.menu .menu__list').eq(0).append(item);
 
-  btn.on('hover:enter', function(){
-
+  item.on('hover:enter', function(){
     Lampa.Select.show({
       title: 'Категории',
       items: [
@@ -171,13 +387,12 @@ function start(){
       ],
       onSelect: loadCategory
     });
-
   });
 }
 
 if(window.appready) start();
 else Lampa.Listener.follow('app', e=>{
-  if(e.type==='ready') start();
+  if(e.type === 'ready') start();
 });
 
 })();
