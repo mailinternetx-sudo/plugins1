@@ -13,9 +13,15 @@ function safeFetch(url, options, cb){
     .then(r => r.text())
     .then(t => {
       try{ cb(JSON.parse(t)); }
-      catch(e){ cb(null); }
+      catch(e){ 
+        console.log('JSON parse error', e);
+        cb(null); 
+      }
     })
-    .catch(()=>cb(null));
+    .catch(e=>{
+      console.log('Fetch error', e);
+      cb(null);
+    });
 }
 
 /**************** API ****************/
@@ -125,27 +131,66 @@ function multiSearch(item, cb){
 /**************** LOAD CATEGORY ****************/
 function loadCategory(name){
 
+  console.log('LOAD CATEGORY:', name);
+
   Lampa.Activity.push({
     title: name,
     component: 'category_full',
     results: []
   });
 
-  safeFetch(PROXY, null, data=>{
+  safeFetch(PROXY, null, function(data){
 
-    let list = (data && data[name]) || [];
+    if(!data){
+      console.log('❌ Worker не дал JSON');
+      return;
+    }
+
+    console.log('WORKER DATA:', data);
+
+    let list = data[name];
+
+    // fallback поиск категории
+    if(!list){
+      let keys = Object.keys(data);
+      let found = keys.find(k => k.toLowerCase().includes(name.toLowerCase()));
+      if(found){
+        list = data[found];
+        console.log('✔ fallback категория:', found);
+      }
+    }
+
+    if(!list || !list.length){
+      console.log('❌ список пуст');
+      return;
+    }
+
     let seen = {};
 
-    list.forEach(item=>{
+    list.slice(0,60).forEach(item=>{
+
       if(!item || !item.title) return;
 
       multiSearch(item, res=>{
-        if(!res || !res.id) return;
-        if(seen[res.id]) return;
 
+        // fallback карточка если не найдено
+        if(!res){
+          res = {
+            id: 'fallback_'+Math.random(),
+            title: item.title,
+            name: item.title,
+            poster_path: '',
+            backdrop_path: '',
+            media_type: item.is_tv ? 'tv':'movie'
+          };
+        }
+
+        if(seen[res.id]) return;
         seen[res.id] = true;
+
         appendSafe(res);
       });
+
     });
 
   });
