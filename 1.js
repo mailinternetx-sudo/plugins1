@@ -5,6 +5,14 @@ const SOURCE = 'Rutor Pro';
 const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
 
+// ---------------- TYPE DETECT ----------------
+function isTV(item){
+  return (
+    /\[.*?\]/.test(item.search || '') ||   // 🔥 главный критерий
+    item.is_tv === true
+  );
+}
+
 // ---------------- TMDB SEARCH ----------------
 async function tmdbSearch(query, type){
 
@@ -23,43 +31,54 @@ async function tmdbSearch(query, type){
 // ---------------- SMART SEARCH ----------------
 async function search(item){
 
-  let query = item.alt || item.title;
-  let year = item.year;
-  let results = [];
+  let queries = [
+    item.search,   // 🔥 приоритет
+    item.alt,
+    item.title
+  ].filter(Boolean);
 
-  // 🔥 сначала правильный тип
-  if(item.is_tv){
-    results = await tmdbSearch(query, 'tv');
-    if(!results.length) results = await tmdbSearch(query, 'movie');
-  }else{
-    results = await tmdbSearch(query, 'movie');
-    if(!results.length) results = await tmdbSearch(query, 'tv');
+  let tv = isTV(item);
+  let year = item.year;
+
+  for(let q of queries){
+
+    let results = [];
+
+    if(tv){
+      results = await tmdbSearch(q, 'tv');
+      if(!results.length) results = await tmdbSearch(q, 'movie');
+    }else{
+      results = await tmdbSearch(q, 'movie');
+      if(!results.length) results = await tmdbSearch(q, 'tv');
+    }
+
+    if(!results.length) continue;
+
+    // 🔥 фильтр по году
+    let best = results.find(r=>{
+      let y = (r.release_date || r.first_air_date || '').slice(0,4);
+      return !year || y === year;
+    }) || results[0];
+
+    if(!best) continue;
+
+    return {
+      id: best.id,
+      title: best.title || best.name,
+      name: best.title || best.name,
+      original_title: best.original_title || best.original_name,
+      poster_path: best.poster_path,
+      backdrop_path: best.backdrop_path,
+      overview: best.overview,
+      vote_average: best.vote_average,
+      media_type: best.media_type || (best.first_air_date ? 'tv':'movie'), // 🔥 фикс
+      release_date: best.release_date,
+      first_air_date: best.first_air_date,
+      source: 'tmdb'
+    };
   }
 
-  if(!results.length) return null;
-
-  // 🔥 фильтр по году
-  let best = results.find(r=>{
-    let y = (r.release_date || r.first_air_date || '').slice(0,4);
-    return !year || y === year;
-  }) || results[0];
-
-  if(!best) return null;
-
-  return {
-    id: best.id,
-    title: best.title || best.name,
-    name: best.title || best.name,
-    original_title: best.original_title || best.original_name,
-    poster_path: best.poster_path,
-    backdrop_path: best.backdrop_path,
-    overview: best.overview,
-    vote_average: best.vote_average,
-    media_type: item.is_tv ? 'tv' : 'movie',
-    release_date: best.release_date,
-    first_air_date: best.first_air_date,
-    source: 'tmdb'
-  };
+  return null;
 }
 
 // ---------------- API ----------------
