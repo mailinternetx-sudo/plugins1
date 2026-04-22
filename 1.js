@@ -5,10 +5,16 @@ const SOURCE = 'Rutor Pro';
 const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
 
+// ---------------- CLEAN SEARCH ----------------
+function cleanSearchQuery(q){
+  if(!q) return '';
+  return q.split('/')[0].trim(); // 🔥 ДО /
+}
+
 // ---------------- TYPE DETECT ----------------
 function isTV(item){
   return (
-    /\[.*?\]/.test(item.search || '') ||   // 🔥 главный критерий
+    /\[.*?\]/.test(item.search || '') ||
     item.is_tv === true
   );
 }
@@ -32,7 +38,7 @@ async function tmdbSearch(query, type){
 async function search(item){
 
   let queries = [
-    item.search,   // 🔥 приоритет
+    cleanSearchQuery(item.search), // 🔥 главный
     item.alt,
     item.title
   ].filter(Boolean);
@@ -54,7 +60,6 @@ async function search(item){
 
     if(!results.length) continue;
 
-    // 🔥 фильтр по году
     let best = results.find(r=>{
       let y = (r.release_date || r.first_air_date || '').slice(0,4);
       return !year || y === year;
@@ -71,7 +76,7 @@ async function search(item){
       backdrop_path: best.backdrop_path,
       overview: best.overview,
       vote_average: best.vote_average,
-      media_type: best.media_type || (best.first_air_date ? 'tv':'movie'), // 🔥 фикс
+      media_type: best.media_type || (best.first_air_date ? 'tv':'movie'),
       release_date: best.release_date,
       first_air_date: best.first_air_date,
       source: 'tmdb'
@@ -105,7 +110,6 @@ function Api(){
           (data[cat] || []).slice(0,40).map(search)
         );
 
-        // 🔥 анти-дубликаты
         let seen = new Set();
 
         line.results = results
