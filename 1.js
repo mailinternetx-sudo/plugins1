@@ -1,6 +1,6 @@
 (function(){
   const SOURCE = 'Rutor Pro';
-  const PROXY = 'https://ваш-worker.workers.dev/'; // сюда ваш URL
+  const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/'; // сюда ваш URL
   const TMDB_KEY = 'f348b4586d1791a40d99edd92164cb86';
 
   let queue = [], running = 0, MAX = 3;
