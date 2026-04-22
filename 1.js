@@ -2,7 +2,7 @@
   'use strict';
 
   const SOURCE = 'Rutor Pro';
-  const PROXY = 'https://ваш-worker.workers.dev/'; // замените на свой URL
+  const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/?v=3'; // замените на свой URL
   const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
 
   // очередь для ограничения параллельных запросов (оставляем как есть)
