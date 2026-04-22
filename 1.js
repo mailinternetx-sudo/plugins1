@@ -1,43 +1,58 @@
 (function(){
 'use strict';
 
-/**************** CONFIG ****************/
+/************** CONFIG **************/
 const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
 const OMDB_API_KEY = '38756ce6';
 const KP_API_KEY   = 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
 const PROXY        = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-/**************** SAFE FETCH ****************/
+/************** HELPERS **************/
+function normalizeKey(s){
+  return (s || '')
+    .toLowerCase()
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
 function safeFetch(url, options, cb){
   fetch(url, options || {})
     .then(r => r.text())
     .then(t => {
       try{ cb(JSON.parse(t)); }
-      catch(e){ 
-        console.log('JSON parse error', e);
-        cb(null); 
-      }
+      catch(e){ console.log('JSON error', e); cb(null); }
     })
-    .catch(e=>{
+    .catch(e => {
       console.log('Fetch error', e);
       cb(null);
     });
 }
 
-/**************** API ****************/
-function tmdbSearch(query, type, cb){
-  safeFetch(
-    'https://api.themoviedb.org/3/search/'+type+
-    '?api_key='+TMDB_API_KEY+
-    '&query='+encodeURIComponent(query)+'&language=ru',
-    null,
-    j => cb(j && j.results ? j.results : [])
-  );
+function appendSafe(card){
+  let act = Lampa.Activity.active();
+  if(!act) return;
+  try{ act.append([card]); }catch(e){}
 }
 
-function omdbSearch(query, cb){
+function isTV(item){
+  return item.is_tv || /\[S\d+/i.test(item.title || '');
+}
+
+/************** API **************/
+function tmdbSearch(q, type, year, cb){
+  let url = 'https://api.themoviedb.org/3/search/'+type+
+    '?api_key='+TMDB_API_KEY+
+    '&query='+encodeURIComponent(q)+
+    '&language=ru';
+
+  if(year) url += '&year='+year;
+
+  safeFetch(url, null, j => cb(j && j.results ? j.results : []));
+}
+
+function omdbSearch(q, cb){
   safeFetch(
-    'https://www.omdbapi.com/?apikey='+OMDB_API_KEY+'&s='+encodeURIComponent(query),
+    'https://www.omdbapi.com/?apikey='+OMDB_API_KEY+'&s='+encodeURIComponent(q),
     null,
     j=>{
       let arr = (j && j.Search) || [];
@@ -54,9 +69,9 @@ function omdbSearch(query, cb){
   );
 }
 
-function kpSearch(query, cb){
+function kpSearch(q, cb){
   safeFetch(
-    'https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword='+encodeURIComponent(query),
+    'https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword='+encodeURIComponent(q),
     { headers: { 'X-API-KEY': KP_API_KEY } },
     j=>{
       let arr = (j && j.films) || [];
@@ -73,23 +88,7 @@ function kpSearch(query, cb){
   );
 }
 
-/**************** HELPERS ****************/
-function isTV(item){
-  let t = (item.search || item.title || '').toLowerCase();
-  return (
-    item.is_tv ||
-    /\[s\d+/i.test(t) ||
-    /сериал/i.test(t)
-  );
-}
-
-function appendSafe(card){
-  let act = Lampa.Activity.active();
-  if(!act) return;
-  try{ act.append([card]); }catch(e){}
-}
-
-/**************** MULTI SEARCH ****************/
+/************** MULTI SEARCH **************/
 function multiSearch(item, cb){
 
   let queries = [item.search, item.alt, item.title].filter(Boolean);
@@ -100,6 +99,7 @@ function multiSearch(item, cb){
 
     let q = queries[i];
 
+    // кириллица → KP сначала
     if(/^[а-яё]/i.test(q)){
       kpSearch(q, res=>{
         if(res.length) return cb(res[0]);
@@ -111,10 +111,10 @@ function multiSearch(item, cb){
   }
 
   function tmdbStage(q, i){
-    tmdbSearch(q, tv ? 'tv':'movie', r=>{
+    tmdbSearch(q, tv ? 'tv':'movie', item.year, r=>{
       if(r.length) return cb(r[0]);
 
-      tmdbSearch(q, tv ? 'movie':'tv', r2=>{
+      tmdbSearch(q, tv ? 'movie':'tv', item.year, r2=>{
         if(r2.length) return cb(r2[0]);
 
         omdbSearch(q, o=>{
@@ -128,10 +128,8 @@ function multiSearch(item, cb){
   step(0);
 }
 
-/**************** LOAD CATEGORY ****************/
+/************** LOAD CATEGORY **************/
 function loadCategory(name){
-
-  console.log('LOAD CATEGORY:', name);
 
   Lampa.Activity.push({
     title: name,
@@ -141,27 +139,22 @@ function loadCategory(name){
 
   safeFetch(PROXY, null, function(data){
 
-    if(!data){
-      console.log('❌ Worker не дал JSON');
+    if(!data || typeof data !== 'object'){
+      console.log('❌ worker не JSON');
       return;
     }
 
-    console.log('WORKER DATA:', data);
-
-    let list = data[name];
-
-    // fallback поиск категории
-    if(!list){
-      let keys = Object.keys(data);
-      let found = keys.find(k => k.toLowerCase().includes(name.toLowerCase()));
-      if(found){
-        list = data[found];
-        console.log('✔ fallback категория:', found);
+    // 🔥 нормализация ключей
+    let list = null;
+    Object.keys(data).forEach(k=>{
+      if(normalizeKey(k) === normalizeKey(name)){
+        list = data[k];
       }
-    }
+    });
 
     if(!list || !list.length){
-      console.log('❌ список пуст');
+      console.log('❌ пустая категория', name);
+      console.log('доступно:', Object.keys(data));
       return;
     }
 
@@ -173,7 +166,7 @@ function loadCategory(name){
 
       multiSearch(item, res=>{
 
-        // fallback карточка если не найдено
+        // 🔥 fallback если не найдено
         if(!res){
           res = {
             id: 'fallback_'+Math.random(),
@@ -196,7 +189,7 @@ function loadCategory(name){
   });
 }
 
-/**************** MENU ****************/
+/************** MENU **************/
 function start(){
 
   const ICON = '🔥';
@@ -228,7 +221,7 @@ function start(){
   });
 }
 
-/**************** INIT ****************/
+/************** INIT **************/
 if(window.appready) start();
 else Lampa.Listener.follow('app', e=>{
   if(e.type === 'ready') start();
