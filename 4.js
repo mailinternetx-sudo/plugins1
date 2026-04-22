@@ -1,255 +1,234 @@
 (function () {
-    'use strict';
+'use strict';
 
-    const SOURCE_NAME = 'Rutor Pro';
+const SOURCE = 'Rutor Pro';
+const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
-    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
+const OMDB_API_KEY = "38756ce6";
+const KP_KEY = "JVGPMHQ-40AMAHD-MG87Z21-R490RWA";
 
-    let cache = {};
-    let queue = [];
-    let active = 0;
-    const MAX = 5;
+// ---------------- NORMALIZE ----------------
+function norm(str){
+  return (str||'').toLowerCase().replace(/[^a-zа-я0-9]/gi,'');
+}
 
-    // ---------------- QUEUE ----------------
-    function runQueue() {
-        if (active >= MAX || !queue.length) return;
+function score(a,b){
+  a = norm(a); b = norm(b);
+  if(a === b) return 100;
 
-        let job = queue.shift();
-        active++;
+  let same = 0;
+  for(let i=0;i<Math.min(a.length,b.length);i++){
+    if(a[i] === b[i]) same++;
+  }
 
-        job(() => {
-            active--;
-            runQueue();
-        });
+  return same / Math.max(a.length,b.length) * 100;
+}
 
-        runQueue();
+// ---------------- SEARCH ----------------
+async function search(item){
+
+  let query = item.alt || item.title;
+
+  let results = [];
+
+  if(item.lang === 'ru'){
+    let r = await kp(item.title);
+    if(r) results.push(r);
+  }
+
+  let t = await tmdb(query);
+  if(t) results.push(t);
+
+  let o = await omdb(query);
+  if(o) results.push(o);
+
+  let f = await filmix(query);
+  if(f) results.push(f);
+
+  let c = await cub(query);
+  if(c) results.push(c);
+
+  let best = results
+    .map(r=>({...r, score: score(item.title, r.title)}))
+    .sort((a,b)=>b.score-a.score)[0];
+
+  if(!best || best.score < 40) return null;
+
+  best.poster_path = best.poster_path || '/img/img_broken.svg';
+
+  return best;
+}
+
+// ---------------- API SOURCES ----------------
+function tmdb(q){
+  return fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=ru-RU`)
+    .then(r=>r.json())
+    .then(j=>{
+      let r = (j.results||[])[0];
+      if(!r) return null;
+
+      return {
+        id: 'tmdb_'+r.id,
+        title:r.title||r.name,
+        poster_path: r.poster_path ? 'https://image.tmdb.org/t/p/w500'+r.poster_path : '',
+        type:r.media_type
+      };
+    }).catch(()=>null);
+}
+
+function kp(q){
+  return fetch(`https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(q)}`,{
+    headers:{'X-API-KEY':KP_KEY}
+  })
+  .then(r=>r.json())
+  .then(j=>{
+    let f = (j.films||[])[0];
+    if(!f) return null;
+
+    return {
+      id:'kp_'+f.filmId,
+      title:f.nameRu,
+      poster_path:f.posterUrlPreview,
+      type:f.type === 'TV_SERIES' ? 'tv':'movie'
+    };
+  }).catch(()=>null);
+}
+
+function omdb(q){
+  return fetch(`https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&t=${encodeURIComponent(q)}`)
+  .then(r=>r.json())
+  .then(j=>{
+    if(j.Response==="False") return null;
+
+    return {
+      id:'imdb_'+j.imdbID,
+      title:j.Title,
+      poster_path:j.Poster!=="N/A"?j.Poster:'',
+      type:j.Type==='series'?'tv':'movie'
+    };
+  }).catch(()=>null);
+}
+
+function filmix(q){
+  return fetch(`https://filmixapp.cyou/api/v2/search?story=${encodeURIComponent(q)}`)
+  .then(r=>r.json())
+  .then(j=>{
+    let f = (j||[])[0];
+    if(!f) return null;
+
+    return {
+      id:'filmix_'+f.id,
+      title:f.title,
+      poster_path:f.poster,
+      type:f.type === 'serial' ? 'tv':'movie'
+    };
+  }).catch(()=>null);
+}
+
+function cub(q){
+  return fetch(`https://cub.red/api/search?q=${encodeURIComponent(q)}`)
+  .then(r=>r.json())
+  .then(j=>{
+    let f = (j.results||[])[0];
+    if(!f) return null;
+
+    return {
+      id:'cub_'+f.id,
+      title:f.title,
+      poster_path:f.poster,
+      type:f.type
+    };
+  }).catch(()=>null);
+}
+
+// ---------------- API ----------------
+function Api(){
+
+  this.category = async function (params, onSuccess, onError){
+
+    try{
+
+      let data = await fetch(PROXY+'?v='+Date.now()).then(r=>r.json());
+
+      let parts = [];
+
+      for(let cat of Object.keys(data)){
+
+        let row = { title:cat, results:[], type:'line' };
+        parts.push(row);
+
+        let promises = (data[cat]||[])
+          .slice(0,30)
+          .map(item => search(item));
+
+        let results = await Promise.all(promises);
+
+        // 🔥 АНТИ-ДУБЛИКАТЫ
+        let seen = new Set();
+
+        row.results = results
+          .filter(Boolean)
+          .filter(r=>{
+            if(seen.has(r.id)) return false;
+            seen.add(r.id);
+            return true;
+          });
+
+      }
+
+      onSuccess(parts);
+
+    }catch(e){
+      onError(e);
     }
+  };
 
-    function addQueue(fn) {
-        queue.push(fn);
-        runQueue();
-    }
+  this.full = function(p,s,e){
+    Lampa.Api.sources.tmdb.full(p,s,e);
+  };
+}
 
-    // ---------------- CACHE ----------------
-    function getCache(key) {
-        if (cache[key]) return cache[key];
+// ---------------- START ----------------
+function start(){
 
-        let raw = localStorage.getItem(key);
-        if (!raw) return null;
+  let api=new Api();
 
-        try {
-            let data = JSON.parse(raw);
-            if (Date.now() - data.time > 1000 * 60 * 60 * 6) return null;
-            return data.value;
-        } catch {
-            return null;
-        }
-    }
+  Lampa.Api.sources.rutorpro=api;
 
-    function setCache(key, value) {
-        cache[key] = value;
+  Object.defineProperty(Lampa.Api.sources,SOURCE,{
+    get:()=>api
+  });
 
-        localStorage.setItem(key, JSON.stringify({
-            time: Date.now(),
-            value
-        }));
-    }
+  function btn(){
+    let m=document.querySelector('.menu .menu__list');
+    if(!m) return setTimeout(btn,500);
 
-    // ---------------- TMDB FIND ----------------
-    function findByIMDb(imdb, cb) {
+    if(document.querySelector('[data-rutor]')) return;
 
-        let key = 'imdb_' + imdb;
-        let cached = getCache(key);
-        if (cached) return cb(cached);
+    let li=document.createElement('li');
+    li.className='menu__item selector';
+    li.setAttribute('data-rutor','1');
 
-        addQueue(done => {
-            fetch(`https://api.themoviedb.org/3/find/${imdb}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=ru-RU`)
-                .then(r => r.json())
-                .then(j => {
+    li.innerHTML=`<div class="menu__ico">🔥</div><div class="menu__text">${SOURCE}</div>`;
 
-                    let res = j.movie_results[0] || j.tv_results[0];
+    li.addEventListener('hover:enter',()=>{
+      Lampa.Activity.push({
+        component:'category',
+        source:SOURCE,
+        title:SOURCE
+      });
+    });
 
-                    if (res) {
-                        setCache(key, res);
-                        cb(res);
-                    } else {
-                        cb(null);
-                    }
+    m.appendChild(li);
+  }
 
-                    done();
-                })
-                .catch(() => done());
-        });
-    }
+  btn();
+}
 
-    // ---------------- FALLBACK SEARCH ----------------
-    function searchFallback(name, year, cb) {
-
-        addQueue(done => {
-
-            fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(name)}&language=ru-RU`)
-                .then(r => r.json())
-                .then(j => {
-
-                    let res = pick(j.results || [], year);
-                    cb(res);
-
-                    done();
-                })
-                .catch(() => done());
-
-        });
-    }
-
-    function pick(results, year) {
-
-        return results
-            .map(r => {
-
-                let score = r.popularity || 0;
-
-                let y = (r.release_date || r.first_air_date || '').slice(0, 4);
-
-                if (year && y === year) score += 50;
-
-                return { ...r, score };
-
-            })
-            .sort((a, b) => b.score - a.score)[0];
-    }
-
-    // ---------------- SMART ----------------
-    function resolve(item, cb) {
-
-        if (item.imdb) {
-            return findByIMDb(item.imdb, res => {
-                if (res) return cb(res);
-                fallback();
-            });
-        }
-
-        fallback();
-
-        function fallback() {
-            searchFallback(item.name_clean || item.name, item.year, cb);
-        }
-    }
-
-    // ---------------- API ----------------
-    function RutorApi() {
-
-        this.category = function (params, onSuccess, onError) {
-
-            fetch(PROXY)
-                .then(r => r.json())
-                .then(data => {
-
-                    let parts = [];
-
-                    Object.keys(data).forEach(cat => {
-
-                        let row = {
-                            title: cat,
-                            results: []
-                        };
-
-                        parts.push(row);
-
-                        (data[cat] || []).forEach(item => {
-
-                            resolve(item, res => {
-
-                                if (!res) return;
-
-                                row.results.push({
-                                    id: res.id,
-                                    title: res.title || res.name,
-                                    original_title: res.original_title || res.original_name,
-                                    poster_path: res.poster_path,
-                                    backdrop_path: res.backdrop_path,
-                                    overview: res.overview,
-                                    vote_average: res.vote_average,
-                                    type: res.media_type || (res.first_air_date ? 'tv' : 'movie')
-                                });
-
-                                if (row.update) row.update();
-
-                            });
-
-                        });
-
-                    });
-
-                    onSuccess(parts);
-
-                })
-                .catch(onError);
-        };
-
-        this.full = function (params, onSuccess, onError) {
-            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
-        };
-    }
-
-    // ---------------- UI (как топ плагины) ----------------
-    function start() {
-
-        let api = new RutorApi();
-
-        Lampa.Api.sources.rutorpro = api;
-
-        Object.defineProperty(Lampa.Api.sources, SOURCE_NAME, {
-            get: () => api
-        });
-
-        // 🔥 кнопка в главном меню (как топ плагины)
-        Lampa.Listener.follow('menu', function (e) {
-
-            if (e.type === 'render') {
-
-                e.items.push({
-                    title: SOURCE_NAME,
-                    icon: '🔥',
-                    onSelect: function () {
-                        Lampa.Activity.push({
-                            title: SOURCE_NAME,
-                            component: 'category',
-                            source: SOURCE_NAME
-                        });
-                    }
-                });
-
-            }
-        });
-
-        // 🔥 авто-добавление на главный экран
-        Lampa.Listener.follow('app', function (e) {
-
-            if (e.type === 'ready') {
-
-                setTimeout(() => {
-
-                    try {
-                        Lampa.Activity.push({
-                            title: SOURCE_NAME,
-                            component: 'category',
-                            source: SOURCE_NAME
-                        });
-                    } catch (e) {}
-
-                }, 1000);
-
-            }
-
-        });
-    }
-
-    if (window.appready) start();
-    else {
-        Lampa.Listener.follow('app', e => {
-            if (e.type === 'ready') start();
-        });
-    }
+if(window.appready) start();
+else Lampa.Listener.follow('app',e=>{
+  if(e.type==='ready') start();
+});
 
 })();
