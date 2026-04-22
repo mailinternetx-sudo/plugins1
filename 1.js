@@ -1,230 +1,153 @@
-(function(){
+(function () {
 'use strict';
 
-/************** CONFIG **************/
-const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
-const OMDB_API_KEY = '38756ce6';
-const KP_API_KEY   = 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
-const PROXY        = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+const SOURCE = 'Rutor Pro';
+const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
 
-/************** HELPERS **************/
-function normalizeKey(s){
-  return (s || '')
-    .toLowerCase()
-    .replace(/\s+/g,' ')
-    .trim();
+// ---------- NORMALIZE ----------
+function norm(s){
+  return (s||'').toLowerCase().replace(/[^a-zа-я0-9]/gi,'');
 }
 
-function safeFetch(url, options, cb){
-  fetch(url, options || {})
-    .then(r => r.text())
-    .then(t => {
-      try{ cb(JSON.parse(t)); }
-      catch(e){ console.log('JSON error', e); cb(null); }
-    })
-    .catch(e => {
-      console.log('Fetch error', e);
-      cb(null);
-    });
+// ---------- TMDB ----------
+function tmdb(q){
+  return fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=ru-RU`)
+    .then(r=>r.json())
+    .then(j=>j.results||[])
+    .catch(()=>[]);
 }
 
-function appendSafe(card){
-  let act = Lampa.Activity.active();
-  if(!act) return;
-  try{ act.append([card]); }catch(e){}
-}
+// ---------- SEARCH ----------
+async function search(item){
 
-function isTV(item){
-  return item.is_tv || /\[S\d+/i.test(item.title || '');
-}
+  let query = item.alt || item.title;
+  let year = item.year;
 
-/************** API **************/
-function tmdbSearch(q, type, year, cb){
-  let url = 'https://api.themoviedb.org/3/search/'+type+
-    '?api_key='+TMDB_API_KEY+
-    '&query='+encodeURIComponent(q)+
-    '&language=ru';
+  let results = await tmdb(query);
+  if(!results.length) return null;
 
-  if(year) url += '&year='+year;
+  // 🔥 ТОЧНЫЙ ФИЛЬТР
+  let filtered = results.filter(r => {
 
-  safeFetch(url, null, j => cb(j && j.results ? j.results : []));
-}
+    let title = (r.title || r.name || '').toLowerCase();
+    let original = (r.original_title || r.original_name || '').toLowerCase();
 
-function omdbSearch(q, cb){
-  safeFetch(
-    'https://www.omdbapi.com/?apikey='+OMDB_API_KEY+'&s='+encodeURIComponent(q),
-    null,
-    j=>{
-      let arr = (j && j.Search) || [];
-      arr = arr.map(i=>({
-        id: i.imdbID,
-        title: i.Title,
-        name: i.Title,
-        poster_path: '',
-        backdrop_path: '',
-        media_type: i.Type === 'series' ? 'tv':'movie'
-      }));
-      cb(arr);
-    }
-  );
-}
+    let target = item.title.toLowerCase();
 
-function kpSearch(q, cb){
-  safeFetch(
-    'https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword='+encodeURIComponent(q),
-    { headers: { 'X-API-KEY': KP_API_KEY } },
-    j=>{
-      let arr = (j && j.films) || [];
-      arr = arr.map(i=>({
-        id: i.filmId,
-        title: i.nameRu || i.nameEn,
-        name: i.nameRu || i.nameEn,
-        poster_path: '',
-        backdrop_path: '',
-        media_type: i.type === 'TV_SERIES' ? 'tv':'movie'
-      }));
-      cb(arr);
-    }
-  );
-}
+    let y = (r.release_date || r.first_air_date || '').slice(0,4);
 
-/************** MULTI SEARCH **************/
-function multiSearch(item, cb){
+    let matchTitle =
+      title.includes(target) ||
+      original.includes(target);
 
-  let queries = [item.search, item.alt, item.title].filter(Boolean);
-  let tv = isTV(item);
+    let matchYear = !year || y === year;
 
-  function step(i){
-    if(i >= queries.length) return cb(null);
-
-    let q = queries[i];
-
-    // кириллица → KP сначала
-    if(/^[а-яё]/i.test(q)){
-      kpSearch(q, res=>{
-        if(res.length) return cb(res[0]);
-        tmdbStage(q, i);
-      });
-    } else {
-      tmdbStage(q, i);
-    }
-  }
-
-  function tmdbStage(q, i){
-    tmdbSearch(q, tv ? 'tv':'movie', item.year, r=>{
-      if(r.length) return cb(r[0]);
-
-      tmdbSearch(q, tv ? 'movie':'tv', item.year, r2=>{
-        if(r2.length) return cb(r2[0]);
-
-        omdbSearch(q, o=>{
-          if(o.length) return cb(o[0]);
-          step(i+1);
-        });
-      });
-    });
-  }
-
-  step(0);
-}
-
-/************** LOAD CATEGORY **************/
-function loadCategory(name){
-
-  Lampa.Activity.push({
-    title: name,
-    component: 'category_full',
-    results: []
+    return matchTitle && matchYear;
   });
 
-  safeFetch(PROXY, null, function(data){
+  let best = filtered[0] || results[0];
+  if(!best) return null;
 
-    if(!data || typeof data !== 'object'){
-      console.log('❌ worker не JSON');
-      return;
-    }
+  return {
+    id: best.id,
+    title: best.title || best.name,
+    name: best.title || best.name,
+    original_title: best.original_title || best.original_name,
+    poster_path: best.poster_path,
+    backdrop_path: best.backdrop_path,
+    overview: best.overview,
+    vote_average: best.vote_average,
+    media_type: best.media_type,
+    release_date: best.release_date,
+    first_air_date: best.first_air_date,
+    source: 'tmdb'
+  };
+}
 
-    // 🔥 нормализация ключей
-    let list = null;
-    Object.keys(data).forEach(k=>{
-      if(normalizeKey(k) === normalizeKey(name)){
-        list = data[k];
+// ---------- API ----------
+function Api(){
+
+  this.category = async function (params, onSuccess, onError){
+    try{
+
+      let data = await fetch(PROXY+'?v='+Date.now()).then(r=>r.json());
+
+      let parts = [];
+
+      for(let cat in data){
+
+        let row = { title:cat, results:[], type:'line' };
+        parts.push(row);
+
+        let results = await Promise.all(
+          (data[cat]||[]).slice(0,30).map(search)
+        );
+
+        // 🔥 анти-дубликаты
+        let seen = new Set();
+
+        row.results = results
+          .filter(Boolean)
+          .filter(r=>{
+            if(seen.has(r.id)) return false;
+            seen.add(r.id);
+            return true;
+          });
       }
-    });
 
-    if(!list || !list.length){
-      console.log('❌ пустая категория', name);
-      console.log('доступно:', Object.keys(data));
-      return;
+      onSuccess(parts);
+
+    }catch(e){
+      onError(e);
     }
+  };
 
-    let seen = {};
-
-    list.slice(0,60).forEach(item=>{
-
-      if(!item || !item.title) return;
-
-      multiSearch(item, res=>{
-
-        // 🔥 fallback если не найдено
-        if(!res){
-          res = {
-            id: 'fallback_'+Math.random(),
-            title: item.title,
-            name: item.title,
-            poster_path: '',
-            backdrop_path: '',
-            media_type: item.is_tv ? 'tv':'movie'
-          };
-        }
-
-        if(seen[res.id]) return;
-        seen[res.id] = true;
-
-        appendSafe(res);
-      });
-
-    });
-
-  });
+  this.full = function(p,s,e){
+    Lampa.Api.sources.tmdb.full(p,s,e);
+  };
 }
 
-/************** MENU **************/
+// ---------- INIT ----------
 function start(){
 
-  const ICON = '🔥';
+  let api = new Api();
 
-  let item = $('<li class="menu__item selector">\
-    <div class="menu__ico">'+ICON+'</div>\
-    <div class="menu__text">Rutor ULTRA</div>\
-  </li>');
+  Lampa.Api.sources.rutorpro = api;
 
-  $('.menu .menu__list').eq(0).append(item);
+  Object.defineProperty(Lampa.Api.sources, SOURCE, {
+    get:()=>api
+  });
 
-  item.on('hover:enter', function(){
+  function addBtn(){
+    let menu = document.querySelector('.menu .menu__list');
+    if(!menu) return setTimeout(addBtn,500);
 
-    Lampa.Select.show({
-      title: 'Rutor категории',
-      items: [
-        {title: "Топ торренты за последние 24 часа"},
-        {title: "Зарубежные фильмы"},
-        {title: "Наши фильмы"},
-        {title: "Зарубежные сериалы"},
-        {title: "Наши сериалы"},
-        {title: "Телевизор"}
-      ],
-      onSelect: function(it){
-        loadCategory(it.title);
-      }
+    if(document.querySelector('[data-rutor]')) return;
+
+    let li = document.createElement('li');
+    li.className='menu__item selector';
+    li.setAttribute('data-rutor','1');
+
+    li.innerHTML=`<div class="menu__ico">🔥</div><div class="menu__text">${SOURCE}</div>`;
+
+    li.addEventListener('hover:enter',()=>{
+      Lampa.Activity.push({
+        component:'category',
+        source:SOURCE,
+        title:SOURCE
+      });
     });
 
-  });
+    menu.appendChild(li);
+  }
+
+  addBtn();
 }
 
-/************** INIT **************/
 if(window.appready) start();
-else Lampa.Listener.follow('app', e=>{
-  if(e.type === 'ready') start();
+else Lampa.Listener.follow('app',e=>{
+  if(e.type==='ready') start();
 });
 
 })();
