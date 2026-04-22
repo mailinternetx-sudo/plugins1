@@ -8,13 +8,14 @@ const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
 const OMDB_API_KEY = "38756ce6";
 const KP_KEY = "JVGPMHQ-40AMAHD-MG87Z21-R490RWA";
 
-// ---------------- NORMALIZE ----------------
+// ---------- NORMALIZE ----------
 function norm(str){
   return (str||'').toLowerCase().replace(/[^a-zа-я0-9]/gi,'');
 }
 
-function score(a,b){
+function score(a,b,y1,y2){
   a = norm(a); b = norm(b);
+
   if(a === b) return 100;
 
   let same = 0;
@@ -22,17 +23,23 @@ function score(a,b){
     if(a[i] === b[i]) same++;
   }
 
-  return same / Math.max(a.length,b.length) * 100;
+  let s = same / Math.max(a.length,b.length) * 100;
+
+  if(y1 && y2 && y1 === y2) s += 30;
+
+  return s;
 }
 
-// ---------------- SEARCH ----------------
+// ---------- SEARCH ----------
 async function search(item){
 
-  let query = item.alt || item.title;
+  let isRU = !item.alt;
+  let query = isRU ? item.title : item.alt;
+  let year = item.year || '';
 
   let results = [];
 
-  if(item.lang === 'ru'){
+  if(isRU){
     let r = await kp(item.title);
     if(r) results.push(r);
   }
@@ -40,7 +47,7 @@ async function search(item){
   let t = await tmdb(query);
   if(t) results.push(t);
 
-  let o = await omdb(query);
+  let o = await omdb(query, year);
   if(o) results.push(o);
 
   let f = await filmix(query);
@@ -50,7 +57,7 @@ async function search(item){
   if(c) results.push(c);
 
   let best = results
-    .map(r=>({...r, score: score(item.title, r.title)}))
+    .map(r=>({...r, score: score(item.title, r.title, year, r.year)}))
     .sort((a,b)=>b.score-a.score)[0];
 
   if(!best || best.score < 40) return null;
@@ -60,7 +67,7 @@ async function search(item){
   return best;
 }
 
-// ---------------- API SOURCES ----------------
+// ---------- API ----------
 function tmdb(q){
   return fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=ru-RU`)
     .then(r=>r.json())
@@ -69,10 +76,11 @@ function tmdb(q){
       if(!r) return null;
 
       return {
-        id: 'tmdb_'+r.id,
+        id:'tmdb_'+r.id,
         title:r.title||r.name,
-        poster_path: r.poster_path ? 'https://image.tmdb.org/t/p/w500'+r.poster_path : '',
-        type:r.media_type
+        poster_path:r.poster_path ? 'https://image.tmdb.org/t/p/w500'+r.poster_path : '',
+        type:r.media_type,
+        year:(r.release_date||r.first_air_date||'').slice(0,4)
       };
     }).catch(()=>null);
 }
@@ -90,13 +98,14 @@ function kp(q){
       id:'kp_'+f.filmId,
       title:f.nameRu,
       poster_path:f.posterUrlPreview,
-      type:f.type === 'TV_SERIES' ? 'tv':'movie'
+      type:f.type === 'TV_SERIES' ? 'tv':'movie',
+      year:f.year
     };
   }).catch(()=>null);
 }
 
-function omdb(q){
-  return fetch(`https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&t=${encodeURIComponent(q)}`)
+function omdb(q,y){
+  return fetch(`https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&t=${encodeURIComponent(q)}&y=${y}`)
   .then(r=>r.json())
   .then(j=>{
     if(j.Response==="False") return null;
@@ -105,7 +114,8 @@ function omdb(q){
       id:'imdb_'+j.imdbID,
       title:j.Title,
       poster_path:j.Poster!=="N/A"?j.Poster:'',
-      type:j.Type==='series'?'tv':'movie'
+      type:j.Type==='series'?'tv':'movie',
+      year:j.Year
     };
   }).catch(()=>null);
 }
@@ -142,7 +152,7 @@ function cub(q){
   }).catch(()=>null);
 }
 
-// ---------------- API ----------------
+// ---------- MAIN ----------
 function Api(){
 
   this.category = async function (params, onSuccess, onError){
@@ -158,13 +168,10 @@ function Api(){
         let row = { title:cat, results:[], type:'line' };
         parts.push(row);
 
-        let promises = (data[cat]||[])
-          .slice(0,30)
-          .map(item => search(item));
+        let results = await Promise.all(
+          (data[cat]||[]).slice(0,30).map(search)
+        );
 
-        let results = await Promise.all(promises);
-
-        // 🔥 АНТИ-ДУБЛИКАТЫ
         let seen = new Set();
 
         row.results = results
@@ -189,7 +196,7 @@ function Api(){
   };
 }
 
-// ---------------- START ----------------
+// ---------- UI ----------
 function start(){
 
   let api=new Api();
@@ -200,9 +207,9 @@ function start(){
     get:()=>api
   });
 
-  function btn(){
-    let m=document.querySelector('.menu .menu__list');
-    if(!m) return setTimeout(btn,500);
+  function addBtn(){
+    let menu=document.querySelector('.menu .menu__list');
+    if(!menu) return setTimeout(addBtn,500);
 
     if(document.querySelector('[data-rutor]')) return;
 
@@ -220,10 +227,10 @@ function start(){
       });
     });
 
-    m.appendChild(li);
+    menu.appendChild(li);
   }
 
-  btn();
+  addBtn();
 }
 
 if(window.appready) start();
