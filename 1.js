@@ -94,7 +94,6 @@ function multiSearch(item, cb){
 
     let q = queries[i];
 
-    // Kinopoisk для RU
     if(/^[а-яё]/i.test(q)){
       kpSearch(q, res=>{
         if(res.length) return cb(res[0]);
@@ -169,14 +168,16 @@ function start(){
     Lampa.Select.show({
       title: 'Rutor категории',
       items: [
-        "Топ торренты за последние 24 часа",
-        "Зарубежные фильмы",
-        "Наши фильмы",
-        "Зарубежные сериалы",
-        "Наши сериалы",
-        "Телевизор"
+        {title: "Топ торренты за последние 24 часа"},
+        {title: "Зарубежные фильмы"},
+        {title: "Наши фильмы"},
+        {title: "Зарубежные сериалы"},
+        {title: "Наши сериалы"},
+        {title: "Телевизор"}
       ],
-      onSelect: loadCategory
+      onSelect: function(it){
+        loadCategory(it.title);
+      }
     });
 
   });
