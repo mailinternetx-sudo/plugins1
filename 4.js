@@ -1,51 +1,53 @@
 (function () {
-    'use strict';
-    const SOURCE = 'Rutor Pro Test';
-    const CATEGORIES = [
-        { title: 'Тестовая категория 1' },
-        { title: 'Тестовая категория 2' }
-    ];
+    const SOURCE = 'SimpleTest';
+    const CATEGORIES = ['Категория A', 'Категория B'];
+
     function Api() {
-        this.category = function (params, onSuccess, onError) {
+        this.category = function (params, callback, errorCallback) {
             try {
+                // Если нет url – показываем список категорий (линии)
                 if (!params.url) {
-                    const lines = CATEGORIES.map(cat => ({
-                        title: cat.title,
-                        url: 'test',
-                        type: 'line',
-                        source: SOURCE,
-                        page: 1,
-                        more: false
-                    }));
-                    onSuccess({ results: lines, page: 1, total_pages: 1, more: false });
+                    var lines = [];
+                    for (var i = 0; i < CATEGORIES.length; i++) {
+                        lines.push({
+                            title: CATEGORIES[i],
+                            url: 'cat' + i,
+                            type: 'line',
+                            source: SOURCE,
+                            more: true
+                        });
+                    }
+                    callback({ results: lines, total_pages: 1 });
                 } else {
-                    onSuccess({ results: [], page: 1, total_pages: 1, more: false });
+                    // При клике на категорию показываем пустой список (для теста)
+                    callback({ results: [], total_pages: 1 });
                 }
-            } catch(e) {
-                console.error('Test error:', e);
-                onError(e);
+            } catch (e) {
+                console.error('SimpleTest error:', e);
+                errorCallback(e);
             }
         };
-        this.full = function(params, onSuccess, onError) { onError('no'); };
+        this.full = function (params, callback, errorCallback) {
+            errorCallback('not implemented');
+        };
     }
-    function addButton() {
-        const menu = document.querySelector('.menu .menu__list');
-        if (!menu) return setTimeout(addButton, 500);
-        if (document.querySelector('[data-rutor-test]')) return;
-        const li = document.createElement('li');
+
+    // Добавляем кнопку в меню
+    var menu = document.querySelector('.menu .menu__list');
+    if (menu && !document.querySelector('[data-simpletest]')) {
+        var li = document.createElement('li');
         li.className = 'menu__item selector';
-        li.setAttribute('data-rutor-test', '1');
-        li.innerHTML = '<div class="menu__ico">🧪</div><div class="menu__text">Test</div>';
-        li.addEventListener('hover:enter', () => {
-            Lampa.Activity.push({ component: 'category', source: SOURCE, title: SOURCE });
+        li.setAttribute('data-simpletest', '1');
+        li.innerHTML = '<div class="menu__ico">🧪</div><div class="menu__text">Simple</div>';
+        li.addEventListener('hover:enter', function () {
+            Lampa.Activity.push({
+                component: 'category',
+                source: SOURCE,
+                title: SOURCE
+            });
         });
         menu.appendChild(li);
+    } else {
+        setTimeout(arguments.callee, 300);
     }
-    function start() {
-        if (Lampa.Api.sources[SOURCE]) return;
-        Lampa.Api.sources[SOURCE] = new Api();
-        addButton();
-    }
-    if (window.appready) start();
-    else Lampa.Listener.follow('app', e => { if (e.type === 'ready') start(); });
 })();
