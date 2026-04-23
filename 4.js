@@ -13,7 +13,6 @@
         { title: '📡 Телевизор (ТВ-передачи)',   path: 'lampac_televizor' }
     ];
 
-    // XMLHttpRequest вместо fetch (для старых версий Lampa)
     function xhrGet(url, callback, errorCallback) {
         var xhr = new XMLHttpRequest();
         xhr.open('GET', url, true);
@@ -35,7 +34,6 @@
         xhr.send();
     }
 
-    // Нормализация элемента для Lampa
     function normalizeItem(item) {
         var id = item.id || 0;
         var poster = item.poster_path || '';
@@ -64,7 +62,7 @@
                 var url = params.url;
                 var page = params.page || 1;
 
-                // Главный экран – список категорий (линии)
+                // Главный экран — передаём МАССИВ линий
                 if (!url) {
                     var lines = [];
                     for (var i = 0; i < CATEGORIES.length; i++) {
@@ -77,12 +75,11 @@
                             more: true
                         });
                     }
-                    // Важно: передаём объект с полем results
-                    onSuccess({ results: lines, page: 1, total_pages: 1, more: false });
+                    onSuccess(lines); // ✅ Массив
                     return;
                 }
 
-                // Запрос к worker за конкретной категорией
+                // Категория — передаём объект с полем results
                 var fullUrl = PROXY + url + '?page=' + page;
                 xhrGet(fullUrl, function (err, data) {
                     if (err) {
@@ -90,20 +87,19 @@
                         onError(err);
                         return;
                     }
-                    var items = data.results || [];
+                    var items = (data && data.results) ? data.results : [];
                     var normalized = [];
                     for (var j = 0; j < items.length; j++) {
                         normalized.push(normalizeItem(items[j]));
                     }
-                    var response = {
+                    onSuccess({
                         results: normalized,
                         page: data.page || page,
                         total_pages: data.total_pages || 1,
                         more: (data.page || page) < (data.total_pages || 1),
                         source: SOURCE,
                         url: url
-                    };
-                    onSuccess(response);
+                    });
                 }, onError);
             } catch (e) {
                 console.error('[Rutor Pro] category exception:', e);
@@ -112,7 +108,6 @@
         };
 
         this.full = function (params, onSuccess, onError) {
-            // Детальная страница – используем штатный TMDB (или можно оставить заглушку)
             if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
                 Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
             } else {
@@ -121,7 +116,6 @@
         };
     }
 
-    // Добавление кнопки в меню
     function addButton() {
         var menu = document.querySelector('.menu .menu__list');
         if (!menu) {
@@ -129,7 +123,6 @@
             return;
         }
         if (document.querySelector('[data-rutor-pro]')) return;
-
         var li = document.createElement('li');
         li.className = 'menu__item selector';
         li.setAttribute('data-rutor-pro', '1');
