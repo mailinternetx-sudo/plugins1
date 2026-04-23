@@ -2,64 +2,71 @@
     'use strict';
 
     const SOURCE = 'Rutor Pro';
-    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/'; // Ваш worker
 
-    // Категории, которые будут отображаться (соответствуют путям worker'а)
+    // Список категорий с заголовками и путями для worker'а
     const CATEGORIES = [
-        { title: 'Зарубежные фильмы', path: 'lampac_movies_new' },
-        { title: 'Русские фильмы', path: 'lampac_movies_ru_new' },
-        { title: 'Зарубежные сериалы', path: 'lampac_all_tv_shows' },
-        { title: 'Русские сериалы', path: 'lampac_all_tv_shows_ru' }
+        { title: '🔥 Топ торренты за 24 часа', path: 'lampac_top24' },
+        { title: '🎬 Зарубежные фильмы', path: 'lampac_movies' },
+        { title: '🇷🇺 Наши фильмы', path: 'lampac_movies_ru' },
+        { title: '📺 Зарубежные сериалы', path: 'lampac_tv_shows' },
+        { title: '🇷🇺 Наши сериалы', path: 'lampac_tv_shows_ru' },
+        { title: '📡 Телевизор (ТВ-передачи)', path: 'lampac_televizor' }
     ];
 
-    // Запрос к worker'у для получения данных категории
-    async function fetchCategory(path) {
-        const url = `${PROXY}${path}?page=1`;
+    // Запрос к worker'у для получения данных категории с пагинацией
+    async function fetchCategory(path, page = 1) {
+        const url = `${PROXY}${path}?page=${page}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        return data.results || [];   // worker возвращает { results, page, total_pages, total_results }
+        return data; // { results, page, total_pages, total_results }
     }
 
     // API для интеграции с Lampa
     function Api() {
         this.category = async function (params, onSuccess, onError) {
             try {
-                const parts = [];
+                // params может содержать url (выбранная категория) и page
+                let currentPage = params.page || 1;
+                let categoryPath = params.url;
 
-                // Параллельно загружаем все категории
-                const results = await Promise.all(
-                    CATEGORIES.map(async (cat) => {
-                        try {
-                            const items = await fetchCategory(cat.path);
-                            return {
-                                title: cat.title,
-                                results: items.slice(0, 40), // ограничим количество (опционально)
-                                type: 'line',
-                                source: SOURCE
-                            };
-                        } catch (err) {
-                            console.error(`Ошибка загрузки ${cat.title}:`, err);
-                            return null;
-                        }
-                    })
-                );
-
-                // Фильтруем успешно загруженные линии с результатами
-                for (const part of results) {
-                    if (part && part.results.length) {
-                        parts.push(part);
-                    }
+                // Если категория не указана – отображаем список всех (главная)
+                if (!categoryPath) {
+                    // Возвращаем "линии" (категории) для главного экрана
+                    const lines = CATEGORIES.map(cat => ({
+                        title: cat.title,
+                        url: cat.path,
+                        type: 'line',
+                        source: SOURCE,
+                        page: 1,
+                        more: true
+                    }));
+                    onSuccess(lines);
+                    return;
                 }
 
-                onSuccess(parts);
+                // Запрашиваем конкретную категорию
+                const data = await fetchCategory(categoryPath, currentPage);
+                const results = data.results || [];
+
+                // Формируем ответ для Lampa
+                const response = {
+                    results: results,
+                    page: data.page || currentPage,
+                    total_pages: data.total_pages || 1,
+                    more: (data.page || currentPage) < (data.total_pages || 1),
+                    source: SOURCE,
+                    url: categoryPath
+                };
+                onSuccess(response);
             } catch (e) {
                 console.error('Rutor Pro error:', e);
                 onError(e);
             }
         };
 
-        // Детальная карточка — используем TMDB (можно оставить или заменить)
+        // Детальная карточка – используем TMDB (можно оставить как есть)
         this.full = function (params, onSuccess, onError) {
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
