@@ -1,153 +1,107 @@
 (function () {
-'use strict';
+    'use strict';
 
-const SOURCE = 'Rutor Pro';
-const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
-const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
+    const SOURCE = 'Rutor Pro';
+    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-// ---------- NORMALIZE ----------
-function norm(s){
-  return (s||'').toLowerCase().replace(/[^a-zа-я0-9]/gi,'');
-}
+    // Категории, которые будут отображаться (соответствуют путям worker'а)
+    const CATEGORIES = [
+        { title: 'Зарубежные фильмы', path: 'lampac_movies_new' },
+        { title: 'Русские фильмы', path: 'lampac_movies_ru_new' },
+        { title: 'Зарубежные сериалы', path: 'lampac_all_tv_shows' },
+        { title: 'Русские сериалы', path: 'lampac_all_tv_shows_ru' }
+    ];
 
-// ---------- TMDB ----------
-function tmdb(q){
-  return fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=ru-RU`)
-    .then(r=>r.json())
-    .then(j=>j.results||[])
-    .catch(()=>[]);
-}
-
-// ---------- SEARCH ----------
-async function search(item){
-
-  let query = item.alt || item.title;
-  let year = item.year;
-
-  let results = await tmdb(query);
-  if(!results.length) return null;
-
-  // 🔥 ТОЧНЫЙ ФИЛЬТР
-  let filtered = results.filter(r => {
-
-    let title = (r.title || r.name || '').toLowerCase();
-    let original = (r.original_title || r.original_name || '').toLowerCase();
-
-    let target = item.title.toLowerCase();
-
-    let y = (r.release_date || r.first_air_date || '').slice(0,4);
-
-    let matchTitle =
-      title.includes(target) ||
-      original.includes(target);
-
-    let matchYear = !year || y === year;
-
-    return matchTitle && matchYear;
-  });
-
-  let best = filtered[0] || results[0];
-  if(!best) return null;
-
-  return {
-    id: best.id,
-    title: best.title || best.name,
-    name: best.title || best.name,
-    original_title: best.original_title || best.original_name,
-    poster_path: best.poster_path,
-    backdrop_path: best.backdrop_path,
-    overview: best.overview,
-    vote_average: best.vote_average,
-    media_type: best.media_type,
-    release_date: best.release_date,
-    first_air_date: best.first_air_date,
-    source: 'tmdb'
-  };
-}
-
-// ---------- API ----------
-function Api(){
-
-  this.category = async function (params, onSuccess, onError){
-    try{
-
-      let data = await fetch(PROXY+'?v='+Date.now()).then(r=>r.json());
-
-      let parts = [];
-
-      for(let cat in data){
-
-        let row = { title:cat, results:[], type:'line' };
-        parts.push(row);
-
-        let results = await Promise.all(
-          (data[cat]||[]).slice(0,30).map(search)
-        );
-
-        // 🔥 анти-дубликаты
-        let seen = new Set();
-
-        row.results = results
-          .filter(Boolean)
-          .filter(r=>{
-            if(seen.has(r.id)) return false;
-            seen.add(r.id);
-            return true;
-          });
-      }
-
-      onSuccess(parts);
-
-    }catch(e){
-      onError(e);
+    // Запрос к worker'у для получения данных категории
+    async function fetchCategory(path) {
+        const url = `${PROXY}${path}?page=1`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        return data.results || [];   // worker возвращает { results, page, total_pages, total_results }
     }
-  };
 
-  this.full = function(p,s,e){
-    Lampa.Api.sources.tmdb.full(p,s,e);
-  };
-}
+    // API для интеграции с Lampa
+    function Api() {
+        this.category = async function (params, onSuccess, onError) {
+            try {
+                const parts = [];
 
-// ---------- INIT ----------
-function start(){
+                // Параллельно загружаем все категории
+                const results = await Promise.all(
+                    CATEGORIES.map(async (cat) => {
+                        try {
+                            const items = await fetchCategory(cat.path);
+                            return {
+                                title: cat.title,
+                                results: items.slice(0, 40), // ограничим количество (опционально)
+                                type: 'line',
+                                source: SOURCE
+                            };
+                        } catch (err) {
+                            console.error(`Ошибка загрузки ${cat.title}:`, err);
+                            return null;
+                        }
+                    })
+                );
 
-  let api = new Api();
+                // Фильтруем успешно загруженные линии с результатами
+                for (const part of results) {
+                    if (part && part.results.length) {
+                        parts.push(part);
+                    }
+                }
 
-  Lampa.Api.sources.rutorpro = api;
+                onSuccess(parts);
+            } catch (e) {
+                console.error('Rutor Pro error:', e);
+                onError(e);
+            }
+        };
 
-  Object.defineProperty(Lampa.Api.sources, SOURCE, {
-    get:()=>api
-  });
+        // Детальная карточка — используем TMDB (можно оставить или заменить)
+        this.full = function (params, onSuccess, onError) {
+            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+        };
+    }
 
-  function addBtn(){
-    let menu = document.querySelector('.menu .menu__list');
-    if(!menu) return setTimeout(addBtn,500);
+    // Добавление кнопки в главное меню
+    function addButton() {
+        let tryAdd = () => {
+            let menu = document.querySelector('.menu .menu__list');
+            if (!menu) return setTimeout(tryAdd, 500);
+            if (document.querySelector('[data-rutor-pro]')) return;
 
-    if(document.querySelector('[data-rutor]')) return;
+            let li = document.createElement('li');
+            li.className = 'menu__item selector';
+            li.setAttribute('data-rutor-pro', '1');
 
-    let li = document.createElement('li');
-    li.className='menu__item selector';
-    li.setAttribute('data-rutor','1');
+            li.innerHTML = `
+                <div class="menu__ico">🔥</div>
+                <div class="menu__text">${SOURCE}</div>
+            `;
 
-    li.innerHTML=`<div class="menu__ico">🔥</div><div class="menu__text">${SOURCE}</div>`;
+            li.addEventListener('hover:enter', () => {
+                Lampa.Activity.push({
+                    component: 'category',
+                    source: SOURCE,
+                    title: SOURCE
+                });
+            });
 
-    li.addEventListener('hover:enter',()=>{
-      Lampa.Activity.push({
-        component:'category',
-        source:SOURCE,
-        title:SOURCE
-      });
-    });
+            menu.appendChild(li);
+        };
+        tryAdd();
+    }
 
-    menu.appendChild(li);
-  }
+    // Инициализация
+    function start() {
+        if (Lampa.Api.sources[SOURCE]) return;
+        let api = new Api();
+        Lampa.Api.sources[SOURCE] = api;
+        addButton();
+    }
 
-  addBtn();
-}
-
-if(window.appready) start();
-else Lampa.Listener.follow('app',e=>{
-  if(e.type==='ready') start();
-});
-
+    if (window.appready) start();
+    else Lampa.Listener.follow('app', e => { if (e.type === 'ready') start(); });
 })();
