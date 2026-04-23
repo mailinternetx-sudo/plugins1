@@ -2,9 +2,8 @@
     'use strict';
 
     const SOURCE = 'Rutor Pro';
-    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/'; // Ваш worker
+    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    // Список категорий с заголовками и путями для worker'а
     const CATEGORIES = [
         { title: '🔥 Топ торренты за 24 часа', path: 'lampac_top24' },
         { title: '🎬 Зарубежные фильмы', path: 'lampac_movies' },
@@ -14,26 +13,52 @@
         { title: '📡 Телевизор (ТВ-передачи)', path: 'lampac_televizor' }
     ];
 
-    // Запрос к worker'у для получения данных категории с пагинацией
     async function fetchCategory(path, page = 1) {
         const url = `${PROXY}${path}?page=${page}`;
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        return data; // { results, page, total_pages, total_results }
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
     }
 
-    // API для интеграции с Lampa
+    function normalizeItem(item) {
+        // Гарантируем наличие id
+        if (!item.id) {
+            const str = item.original_title || item.title || Math.random().toString();
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = ((hash << 5) - hash) + str.charCodeAt(i);
+                hash |= 0;
+            }
+            item.id = Math.abs(hash);
+        }
+        return {
+            id: item.id,
+            title: item.title || item.name,
+            name: item.name || item.title,
+            original_title: item.original_title,
+            original_name: item.original_name,
+            overview: item.overview,
+            poster: item.poster_path,        // Lampa распознает poster
+            poster_path: item.poster_path,
+            backdrop_path: item.backdrop_path,
+            img: item.poster_path,
+            vote_average: item.vote_average || 0,
+            release_date: item.release_date,
+            first_air_date: item.first_air_date,
+            media_type: item.type === 'tv' ? 'tv' : 'movie',
+            type: item.type,
+            source: SOURCE
+        };
+    }
+
     function Api() {
         this.category = async function (params, onSuccess, onError) {
             try {
-                // params может содержать url (выбранная категория) и page
-                let currentPage = params.page || 1;
-                let categoryPath = params.url;
+                const url = params.url;
+                const page = params.page || 1;
 
-                // Если категория не указана – отображаем список всех (главная)
-                if (!categoryPath) {
-                    // Возвращаем "линии" (категории) для главного экрана
+                // Главный экран: список категорий
+                if (!url) {
                     const lines = CATEGORIES.map(cat => ({
                         title: cat.title,
                         url: cat.path,
@@ -46,48 +71,41 @@
                     return;
                 }
 
-                // Запрашиваем конкретную категорию
-                const data = await fetchCategory(categoryPath, currentPage);
-                const results = data.results || [];
+                // Загрузка конкретной категории
+                const data = await fetchCategory(url, page);
+                const results = (data.results || []).map(normalizeItem);
 
-                // Формируем ответ для Lampa
                 const response = {
                     results: results,
-                    page: data.page || currentPage,
+                    page: data.page || page,
                     total_pages: data.total_pages || 1,
-                    more: (data.page || currentPage) < (data.total_pages || 1),
+                    more: (data.page || page) < (data.total_pages || 1),
                     source: SOURCE,
-                    url: categoryPath
+                    url: url
                 };
                 onSuccess(response);
             } catch (e) {
-                console.error('Rutor Pro error:', e);
+                console.error('[Rutor Pro]', e);
                 onError(e);
             }
         };
 
-        // Детальная карточка – используем TMDB (можно оставить как есть)
         this.full = function (params, onSuccess, onError) {
+            // Детальная карточка через TMDB (можно оставить)
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
     }
 
-    // Добавление кнопки в главное меню
     function addButton() {
-        let tryAdd = () => {
-            let menu = document.querySelector('.menu .menu__list');
+        const tryAdd = () => {
+            const menu = document.querySelector('.menu .menu__list');
             if (!menu) return setTimeout(tryAdd, 500);
             if (document.querySelector('[data-rutor-pro]')) return;
 
-            let li = document.createElement('li');
+            const li = document.createElement('li');
             li.className = 'menu__item selector';
             li.setAttribute('data-rutor-pro', '1');
-
-            li.innerHTML = `
-                <div class="menu__ico">🔥</div>
-                <div class="menu__text">${SOURCE}</div>
-            `;
-
+            li.innerHTML = `<div class="menu__ico">🔥</div><div class="menu__text">${SOURCE}</div>`;
             li.addEventListener('hover:enter', () => {
                 Lampa.Activity.push({
                     component: 'category',
@@ -95,17 +113,14 @@
                     title: SOURCE
                 });
             });
-
             menu.appendChild(li);
         };
         tryAdd();
     }
 
-    // Инициализация
     function start() {
         if (Lampa.Api.sources[SOURCE]) return;
-        let api = new Api();
-        Lampa.Api.sources[SOURCE] = api;
+        Lampa.Api.sources[SOURCE] = new Api();
         addButton();
     }
 
