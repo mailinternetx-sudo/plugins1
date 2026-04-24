@@ -68,8 +68,7 @@
       // 🔹 1. ЗАПРОС СПИСКА КАТЕГОРИЙ
       if (!params.url || params.url === '__categories__') {
         
-        // 1. ИЗМЕНЕНИЕ: Явно указываем /categories
-        var catUrl = PROXY_URL + '/categories';
+        var catUrl = PROXY_URL + 'categories';
         
         xhrGet(catUrl, function (data) {
           if (!data || !Array.isArray(data.results)) {
@@ -80,9 +79,12 @@
           data.results.forEach(function (cat) {
             cat.source = SOURCE_NAME;
             
-            // 2. ИЗМЕНЕНИЕ: Плагин дописывает полный путь к URL категории
-            // Было "top24", станет "https://my-proxy.../top24"
-            cat.url = PROXY_URL + cat.url; 
+            // ФИКС 1: Lampa требует КОРОТКИЙ url для внутреннего роутера (например "top24")
+            cat.url = cat.url; 
+            
+            // ФИКС 2: Убираем длинную Base64 строку от Worker. 
+            // Пустая строка заставит Lampa использовать свою стандартную иконку.
+            cat.poster_path = ''; 
           });
 
           onSuccess(data);
@@ -98,9 +100,8 @@
       // 🔹 2. ЗАПРОС ФИЛЬМОВ/СЕРИАЛОВ ИЗ КАТЕГОРИИ
       var page = params.page || 1;
       
-      // Так как в шаге 1 мы уже сделали cat.url полным (с https://...),
-      // здесь мы просто приклеиваем к нему параметр страницы
-      var requestUrl = params.url + '?page=' + page; 
+      // ФИКС 3: Так как url теперь короткий ("top24"), склеиваем его с PROXY_URL
+      var requestUrl = PROXY_URL + params.url + '?page=' + page; 
 
       xhrGet(requestUrl, function (data) {
         if (!data || !Array.isArray(data.results)) {
@@ -120,7 +121,7 @@
           total_pages: data.total_pages || 1,
           total_results: data.total_results || items.length,
           source: SOURCE_NAME,
-          url: params.url // Передаем полный URL дальше для пагинации (листания страниц)
+          url: params.url // Передаем короткий url для пагинации
         });
 
       }, function (err) {
