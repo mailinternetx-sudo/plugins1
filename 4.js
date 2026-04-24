@@ -44,14 +44,14 @@
           try {
             onSuccess(JSON.parse(xhr.responseText));
           } catch (e) {
-            onError(new Error('JSON: ' + e.message));
+            onError(new Error('JSON parse error'));
           }
         } else {
           onError(new Error('HTTP ' + xhr.status));
         }
       }
     };
-    xhr.onerror = function () { onError(new Error('Network')); };
+    xhr.onerror = function () { onError(new Error('Network error')); };
     xhr.send();
   }
 
@@ -60,48 +60,53 @@
     var self = this;
 
     self.category = function (params, onSuccess, onError) {
-      
-      // 🔹 ГЛАВНОЕ МЕНЮ: список категорий
-      // Lampa ожидает ЧИСТЫЙ МАССИВ объектов с полями: id, title, url
+      params = params || {};
+
+      // 🔹 1. СПИСОК КАТЕГОРИЙ (если url не указан)
       if (!params.url) {
         var categories = [
-          { id: 'rutor_top24', title: '🔥 Топ за 24 часа', url: 'lampac_top24', source: SOURCE_NAME },
-          { id: 'rutor_movies', title: '🎬 Зарубежные фильмы', url: 'lampac_movies', source: SOURCE_NAME },
-          { id: 'rutor_movies_ru', title: '🇷🇺 Наши фильмы', url: 'lampac_movies_ru', source: SOURCE_NAME },
-          { id: 'rutor_tv', title: '📺 Зарубежные сериалы', url: 'lampac_tv_shows', source: SOURCE_NAME },
-          { id: 'rutor_tv_ru', title: '🇷🇺 Наши сериалы', url: 'lampac_tv_shows_ru', source: SOURCE_NAME },
-          { id: 'rutor_televizor', title: '📡 ТВ-передачи', url: 'lampac_televizor', source: SOURCE_NAME }
+          { id: 'rutor_top24', title: '🔥 Топ за 24 часа', url: 'lampac_top24', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
+          { id: 'rutor_movies', title: '🎬 Зарубежные фильмы', url: 'lampac_movies', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
+          { id: 'rutor_movies_ru', title: '🇷🇺 Наши фильмы', url: 'lampac_movies_ru', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
+          { id: 'rutor_tv', title: '📺 Зарубежные сериалы', url: 'lampac_tv_shows', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
+          { id: 'rutor_tv_ru', title: '🇷🇺 Наши сериалы', url: 'lampac_tv_shows_ru', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
+          { id: 'rutor_televizor', title: '📡 ТВ-передачи', url: 'lampac_televizor', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' }
         ];
-        // ✅ Для списка категорий — чистый массив
-        onSuccess(categories);
+
+        // ✅ КРИТИЧНО: всегда возвращаем объект с полем results
+        onSuccess({
+          results: categories,
+          page: 1,
+          total_pages: 1,
+          total_results: categories.length,
+          source: SOURCE_NAME
+        });
         return;
       }
 
-      // 🔹 СПИСОК ФИЛЬМОВ внутри категории
+      // 🔹 2. СПИСОК ФИЛЬМОВ/СЕРИАЛОВ
       var page = params.page || 1;
       var requestUrl = PROXY_URL + params.url + '?page=' + page;
 
       xhrGet(requestUrl,
         function (data) {
           if (!data || !Array.isArray(data.results)) {
-            onError(new Error('Bad response'));
+            onError(new Error('Invalid response structure'));
             return;
           }
           
-          // Нормализация + фильтрация
-          var results = data.results
+          var items = data.results
             .map(normalizeItem)
             .filter(function (item) { return item && item.id; });
 
-          // ✅ КРИТИЧНО: для списка фильмов возвращаем ОБЪЕКТ с results, page и т.д.
-          // Именно это ожидает Lampa.Line и именно здесь была ошибка .slice()
+          // ✅ Единый формат ответа
           onSuccess({
-            results: results,
+            results: items,
             page: data.page || page,
             total_pages: data.total_pages || 1,
-            total_results: data.total_results || results.length,
+            total_results: data.total_results || items.length,
             source: SOURCE_NAME,
-            url: params.url  // важно для пагинации
+            url: params.url
           });
         },
         function (err) {
@@ -111,14 +116,14 @@
       );
     };
 
-    // Полная информация о карточке
+    // Полная информация о карточке (делегирование TMDB)
     self.full = function (params, onSuccess, onError) {
       var card = params.card || {};
       var method = (card.type === 'tv' || card.number_of_seasons) ? 'tv' : 'movie';
       
       if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
         Lampa.Api.sources.tmdb.full({ card: card, method: method }, onSuccess, function() {
-          onSuccess(card);
+          onSuccess(card); // fallback если TMDB недоступен
         });
       } else {
         onSuccess(card);
@@ -148,7 +153,7 @@
         title: SOURCE_NAME,
         component: 'category',
         source: SOURCE_NAME,
-        url: ''  // пустой url = показать список категорий
+        url: '' // пустой url -> покажет список категорий
       });
     });
 
@@ -166,7 +171,7 @@
       obs.observe(document.body, { childList: true, subtree: true });
       setTimeout(function () { obs.disconnect(); }, 10000);
     }
-    console.log('✅ ' + SOURCE_NAME + ': initialized');
+    console.log('✅ ' + SOURCE_NAME + ': plugin initialized');
   }
 
   // Запуск
