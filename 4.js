@@ -62,7 +62,6 @@
       if (thrown) return false;
       if (!watched) return true;
 
-      // Для фильмов: проверяем прогресс просмотра
       if (mediaType === 'movie') {
         var hash = Lampa.Utils.hash(String(item.id));
         var view = Lampa.Storage.cache('file_view', 300, {})[hash];
@@ -84,13 +83,9 @@
       }
       return '';
     }
-    function toHttps(v) {
-      if (!v || typeof v !== 'string') return '';
-      return v.replace(/^http:\/\//i, 'https://');
-    }
 
     var results = (json.results || []).map(function (item) {
-      // Элементы-категории (у них есть url и нет числового id)
+      // Элементы-категории
       if (item.url && !/^\d+$/.test(String(item.id))) {
         return {
           id: item.id,
@@ -114,7 +109,6 @@
       var posterPath = toTmdbPath(item.poster_path);
       var backdropPath = toTmdbPath(item.backdrop_path);
       
-      // Если путь не валидный, пробуем сконвертировать из полного URL
       if (!posterPath && item.poster_path && /^https?:\/\//i.test(item.poster_path)) {
         posterPath = '/t/p/w500' + item.poster_path.replace(/^https?:\/\/[^\/]+\/t\/p\/w\d+\//, '');
       }
@@ -147,7 +141,6 @@
       };
     });
 
-    // Фильтруем просмотренные только для списков контента (не для меню категорий)
     if (categoryUrl && categoryUrl !== '__categories__') {
       results = filterWatchedContent(results);
     }
@@ -161,7 +154,6 @@
       source: SOURCE_NAME
     };
   }
-
   // === API SERVICE ===
   function RutorApiService() {
     var self = this;
@@ -179,7 +171,6 @@
       var category = params.url || CATEGORIES.movies;
       var page = params.page || 1;
       var url = BASE_URL + category + '?page=' + page;
-
       self.get(url, params, function (data) {
         onComplete({
           results: data.results,
@@ -190,13 +181,13 @@
       }, onError);
     };
 
-    // ✅ ИСПРАВЛЕННЫЙ self.full — ключевое исправление для undefined ID
+    // ✅ ИСПРАВЛЕННЫЙ self.full — защита от undefined ID
     self.full = function (params, onSuccess, onError) {
       params = params || {};
-      var card = params.card || {};
+      var card = params.card || params.item || params.data || {};
       
-      // 1. Если это категория — навигация, не TMDB
-      if (card.url && card.type === 'category') {
+      // 1. Категория → навигация
+      if (card.url && (card.type === 'category' || card.media_type === 'category')) {
         Lampa.Activity.push({
           title: card.title,
           component: 'category',
@@ -208,32 +199,66 @@
         return;
       }
       
-      // 2. Если ID не числовой (не TMDB) — отдаём как есть
-      var idStr = String(card.id || '');
+      // 2. Нормализация ID
+      var rawId = card.id || card.tmdb_id || card.kinopoisk_id;
+      var idStr = String(rawId || '').trim();
       var isTmdbId = /^\d+$/.test(idStr);
       
-      if (!isTmdbId) {
-        onSuccess(card);
+      if (!isTmdbId || !rawId) {
+        var safeCard = {
+          id: rawId || 0,
+          title: card.title || card.name || 'Без названия',
+          name: card.name || card.title || 'Без названия',
+          original_title: card.original_title || '',
+          poster_path: card.poster_path || '',
+          backdrop_path: card.backdrop_path || '',
+          overview: card.overview || '',
+          vote_average: card.vote_average || 0,
+          type: card.type === 'tv' ? 'tv' : 'movie',
+          media_type: card.type === 'tv' ? 'tv' : 'movie',
+          source: SOURCE_NAME
+        };
+        onSuccess(safeCard);
         return;
       }
       
-      // 3. Определяем тип: tv или movie
+      // 3. Тип контента
       var method = 'movie';
-      if (card.type === 'tv' || card.media_type === 'tv' || card.number_of_seasons || card.first_air_date) {
+      if (card.type === 'tv' || card.media_type === 'tv' || 
+          card.number_of_seasons || card.seasons || card.first_air_date) {
         method = 'tv';
       }
       
-      // 4. КРИТИЧНО: добавляем method в params (как в NUMParser)
-      params.method = method;
+      // 4. Создаём изолированный объект для TMDB
+      var tmdbParams = {
+        card: {
+          id: parseInt(idStr, 10),
+          title: card.title,
+          name: card.name,
+          original_title: card.original_title,
+          poster_path: card.poster_path,
+          backdrop_path: card.backdrop_path,
+          overview: card.overview,
+          vote_average: card.vote_average,
+          type: card.type,
+          media_type: card.media_type,
+          release_date: card.release_date,
+          first_air_date: card.first_air_date,
+          number_of_seasons: card.number_of_seasons
+        },
+        method: method,
+        lang: params.lang,
+        language: params.language
+      };
       
+      // 5. Вызов TMDB
       if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
-        Lampa.Api.sources.tmdb.full(params, onSuccess, function() {
-          // Fallback: если TMDB упал, отдаём исходную карточку
-          console.warn('TMDB full failed, returning cached card');
-          onSuccess(card);
+        Lampa.Api.sources.tmdb.full(tmdbParams, onSuccess, function(err) {
+          console.warn('TMDB full failed:', err);
+          onSuccess(tmdbParams.card);
         });
       } else {
-        onSuccess(card);
+        onSuccess(tmdbParams.card);
       }
     };
 
@@ -289,7 +314,6 @@
       }, onError);
     };
   }
-
   // === РЕГИСТРАЦИЯ ИСТОЧНИКА ===
   var rutorApi = new RutorApiService();
   Lampa.Api.sources.rutorpro = rutorApi;
@@ -308,7 +332,6 @@
       icon: ICON
     });
 
-    // Скрыть просмотренные
     Lampa.SettingsApi.addParam({
       component: 'rutor_settings',
       param: {
@@ -329,7 +352,6 @@
       }
     });
 
-    // Порог просмотра
     Lampa.SettingsApi.addParam({
       component: 'rutor_settings',
       param: {
@@ -346,7 +368,6 @@
       }
     });
 
-    // Название источника
     Lampa.SettingsApi.addParam({
       component: 'rutor_settings',
       param: { name: 'rutor_source_name', type: 'input', default: DEFAULT_SOURCE_NAME },
@@ -358,7 +379,6 @@
       }
     });
 
-    // Видимость категорий
     CATEGORY_SETTINGS_ORDER.forEach(function (key) {
       Lampa.SettingsApi.addParam({
         component: 'rutor_settings',
@@ -375,7 +395,7 @@
     });
   }
 
-  // === МЕНЮ И ИНИЦИАЛИЗАЦИЯ ===
+  // === МЕНЮ ===
   function addMenuItem() {
     var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
     if (!menu) return false;
@@ -399,7 +419,7 @@
     return true;
   }
 
-  // === LISTENER ДЛЯ БЕСКОНЕЧНОГО СКРОЛЛА (как в NUMParser) ===
+  // === БЕСКОНЕЧНЫЙ СКРОЛЛ ===
   function registerLineListener() {
     Lampa.Listener.follow('line', function (event) {
       if (event.type !== 'append') return;
@@ -438,7 +458,7 @@
       setTimeout(function () { obs.disconnect(); }, 10000);
     }
     registerLineListener();
-    console.log('✅ ' + SOURCE_NAME + ': initialized with NUMParser patterns');
+    console.log('✅ ' + SOURCE_NAME + ': initialized');
   }
 
   if (window.appready) { init(); }
