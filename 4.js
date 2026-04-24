@@ -6,7 +6,7 @@
   var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
   var ICON = '🔥';
 
-  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА (фильм/сериал) ===
+  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА ===
   function normalizeItem(item) {
     if (!item) return null;
     
@@ -55,24 +55,24 @@
     xhr.send();
   }
 
-  // === API ===
+  // === API SERVICE ===
   function Api() {
     var self = this;
 
     self.category = function (params, onSuccess, onError) {
       
       // 🔹 ГЛАВНОЕ МЕНЮ: список категорий
-      // Lampa ожидает массив объектов с полями: title, url, source
+      // Lampa ожидает ЧИСТЫЙ МАССИВ объектов с полями: id, title, url
       if (!params.url) {
         var categories = [
-          { title: '🔥 Топ за 24 часа', url: 'lampac_top24', source: SOURCE_NAME },
-          { title: '🎬 Зарубежные фильмы', url: 'lampac_movies', source: SOURCE_NAME },
-          { title: '🇷🇺 Наши фильмы', url: 'lampac_movies_ru', source: SOURCE_NAME },
-          { title: '📺 Зарубежные сериалы', url: 'lampac_tv_shows', source: SOURCE_NAME },
-          { title: '🇷🇺 Наши сериалы', url: 'lampac_tv_shows_ru', source: SOURCE_NAME },
-          { title: '📡 ТВ-передачи', url: 'lampac_televizor', source: SOURCE_NAME }
+          { id: 'rutor_top24', title: '🔥 Топ за 24 часа', url: 'lampac_top24', source: SOURCE_NAME },
+          { id: 'rutor_movies', title: '🎬 Зарубежные фильмы', url: 'lampac_movies', source: SOURCE_NAME },
+          { id: 'rutor_movies_ru', title: '🇷🇺 Наши фильмы', url: 'lampac_movies_ru', source: SOURCE_NAME },
+          { id: 'rutor_tv', title: '📺 Зарубежные сериалы', url: 'lampac_tv_shows', source: SOURCE_NAME },
+          { id: 'rutor_tv_ru', title: '🇷🇺 Наши сериалы', url: 'lampac_tv_shows_ru', source: SOURCE_NAME },
+          { id: 'rutor_televizor', title: '📡 ТВ-передачи', url: 'lampac_televizor', source: SOURCE_NAME }
         ];
-        // ✅ Возвращаем ЧИСТЫЙ МАССИВ (не объект с results!)
+        // ✅ Для списка категорий — чистый массив
         onSuccess(categories);
         return;
       }
@@ -88,13 +88,21 @@
             return;
           }
           
-          // Нормализация + фильтрация пустых
+          // Нормализация + фильтрация
           var results = data.results
             .map(normalizeItem)
             .filter(function (item) { return item && item.id; });
 
-          // ✅ Возвращаем ЧИСТЫЙ МАССИВ фильмов
-          onSuccess(results);
+          // ✅ КРИТИЧНО: для списка фильмов возвращаем ОБЪЕКТ с results, page и т.д.
+          // Именно это ожидает Lampa.Line и именно здесь была ошибка .slice()
+          onSuccess({
+            results: results,
+            page: data.page || page,
+            total_pages: data.total_pages || 1,
+            total_results: data.total_results || results.length,
+            source: SOURCE_NAME,
+            url: params.url  // важно для пагинации
+          });
         },
         function (err) {
           console.error('Rutor Pro error:', err);
@@ -103,14 +111,14 @@
       );
     };
 
-    // Полная информация о карточке (делегирование TMDB)
+    // Полная информация о карточке
     self.full = function (params, onSuccess, onError) {
       var card = params.card || {};
       var method = (card.type === 'tv' || card.number_of_seasons) ? 'tv' : 'movie';
       
       if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
         Lampa.Api.sources.tmdb.full({ card: card, method: method }, onSuccess, function() {
-          onSuccess(card); // fallback
+          onSuccess(card);
         });
       } else {
         onSuccess(card);
@@ -118,7 +126,7 @@
     };
   }
 
-  // === РЕГИСТРАЦИЯ ===
+  // === РЕГИСТРАЦИЯ ИСТОЧНИКА ===
   if (!Lampa.Api.sources[SOURCE_NAME]) {
     Lampa.Api.sources[SOURCE_NAME] = new Api();
   }
