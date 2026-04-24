@@ -6,7 +6,7 @@
   var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
   var ICON = '🔥';
 
-  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА (для фильмов/сериалов) ===
+  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА (фильмы/сериалы) ===
   function normalizeItem(item) {
     if (!item) return null;
     
@@ -18,10 +18,12 @@
       title: item.title || item.name || 'Без названия',
       name: item.name || item.title || 'Без названия',
       original_title: item.original_title || '',
+      original_name: item.original_name || '',
       poster_path: item.poster_path || '',
       backdrop_path: item.backdrop_path || '',
       overview: item.overview || '',
       vote_average: parseFloat(item.vote_average) || 0,
+      rating: { kp: parseFloat(item.vote_average) || 0, tmdb: parseFloat(item.vote_average) || 0 },
       type: item.type === 'tv' ? 'tv' : 'movie',
       media_type: item.type === 'tv' ? 'tv' : 'movie',
       original_language: item.original_language || 'en',
@@ -59,10 +61,9 @@
     self.category = function (params, onSuccess, onError) {
       params = params || {};
 
-      // 🔹 1. СПИСОК КАТЕГОРИЙ (меню плагина)
-      // Используем специальный маркер, чтобы Lampa не путала с запросом фильмов
+      // 🔹 1. СПИСОК КАТЕГОРИЙ
       if (!params.url || params.url === '__categories__') {
-        var categories = [
+        var catData = [
           { id: 'rutor_top24', title: '🔥 Топ за 24 часа', url: 'lampac_top24' },
           { id: 'rutor_movies', title: '🎬 Зарубежные фильмы', url: 'lampac_movies' },
           { id: 'rutor_movies_ru', title: '🇷🇺 Наши фильмы', url: 'lampac_movies_ru' },
@@ -71,19 +72,28 @@
           { id: 'rutor_televizor', title: '📡 ТВ-передачи', url: 'lampac_televizor' }
         ];
 
-        // ⚠️ КРИТИЧНО ДЛЯ LAMPA UI:
-        // Lampa скрывает карточки без постера или с нестандартным type.
-        // Временно приводим их к формату "фильм", чтобы они точно отрисовались.
-        categories.forEach(function (cat) {
-          cat.poster_path = '/img/img_broken.svg'; // валидный путь-заглушка
-          cat.backdrop_path = '';
-          cat.type = 'movie';
-          cat.media_type = 'movie';
-          cat.vote_average = 0;
-          cat.original_title = cat.title;
-          cat.source = SOURCE_NAME;
-          cat.overview = 'Нажмите для перехода в раздел';
-          cat.promo = cat.title;
+        // ✅ КРИТИЧНО: полное заполнение полей под строгий парсер Lampa
+        var categories = catData.map(function (c) {
+          return {
+            id: c.id,
+            title: c.title,
+            name: c.title,              // ✅ Обязательно для Lampa
+            original_title: c.title,
+            original_name: c.title,
+            poster_path: '/img/img_broken.svg', // Валидная заглушка
+            backdrop_path: '',
+            overview: 'Нажмите для перехода в раздел',
+            promo: c.title,
+            promo_title: c.title,
+            vote_average: 0,
+            rating: { kp: 0, tmdb: 0 },
+            type: 'movie',
+            media_type: 'movie',
+            original_language: 'en',
+            year: 2024,
+            source: SOURCE_NAME,
+            url: c.url                  // ✅ Сохраняем для навигации
+          };
         });
 
         onSuccess({
@@ -130,6 +140,12 @@
     // Полная информация о карточке (делегирование TMDB)
     self.full = function (params, onSuccess, onError) {
       var card = params.card || {};
+      // Если это категория, не пытаемся тянуть детали из TMDB
+      if (card.url && !card.id.toString().includes('_')) {
+        onSuccess(card);
+        return;
+      }
+
       var method = (card.type === 'tv' || card.number_of_seasons) ? 'tv' : 'movie';
       
       if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
@@ -164,7 +180,7 @@
         title: SOURCE_NAME,
         component: 'category',
         source: SOURCE_NAME,
-        url: '__categories__' // маркер для показа меню категорий
+        url: '__categories__'
       });
     });
 
