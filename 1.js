@@ -1,192 +1,182 @@
 /**
- * 🔥 Rutor Pro Source for Lampa
- * Интеграция с вашим Cloudflare Worker
+ * 🔥 Rutor Pro Source для Lampa (webOS Compatible)
+ * Совместимость: Lampa 3.0+ | webOS 3.0+
  */
 (function() {
     'use strict';
 
-    // ====== КОНФИГ ======
-    const WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev';
-    const SOURCE_ID = 'rutor_pro';
-    const SOURCE_NAME = '🔥 Rutor Pro';
-    
-    const cache = new Map();
-    const CACHE_TTL = 5 * 60 * 1000; // 5 минут
-
-    // ====== КЭШ ======
-    function cachedFetch(key, url) {
-        const cached = cache.get(key);
-        if (cached && Date.now() - cached.ts < CACHE_TTL) {
-            return Promise.resolve(cached.data);
-        }
-        return fetch(url)
-            .then(r => {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.json();
-            })
-            .then(data => {
-                cache.set(key, { data: data, ts: Date.now() });
-                if (cache.size > 20) {
-                    const oldest = [...cache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
-                    cache.delete(oldest[0]);
-                }
-                return data;
-            });
-    }
-
-    // ====== SOURCE OBJECT (обязательные методы) ======
-    const RutorSource = {
-        
-        // 🏠 Главная страница источника — показывает категории
-        main: function(params, onComplite, onError) {
-            cachedFetch('rutor:main', WORKER_URL + '/categories')
-                .then(data => {
-                    const collections = (data.results || []).map(cat => ({
-                        title: cat.title,
-                        url: cat.url,
-                        type: 'collection',
-                        poster: cat.poster_path,
-                        items: [] // пустой массив — Lampa сам загрузит контент при клике
-                    }));
-                    onComplite({ collections: collections });
-                })
-                .catch(err => {
-                    console.error('[RutorPro]', err);
-                    onComplite({ collections: [] });
-                });
-        },
-
-        // 📁 Коллекция (категория) — показывает фильмы
-        collection: function(params, onComplite, onError) {
-            const catUrl = params.url;
-            if (!catUrl) { onComplite({ items: [] }); return; }
-            
-            cachedFetch('rutor:cat:' + catUrl, WORKER_URL + '/' + catUrl)
-                .then(data => {
-                    const items = (data.results || []).map(item => ({
-                        id: SOURCE_ID + '_' + item.id,
-                        title: item.title,
-                        original_title: item.original_title,
-                        overview: item.overview || '',
-                        poster: item.poster_path,
-                        backdrop: item.backdrop_path,
-                        rating: item.vote_average || 0,
-                        year: item.year || '',
-                        type: item.type || item.media_type || 'movie',
-                        source: SOURCE_ID,
-                        // Для поиска торрента передаём оригинальное название
-                        _rutor_title: item.title + (item.year ? ' (' + item.year + ')' : '')
-                    }));
-                    onComplite({ items: items, page: 1, total_pages: 1, more: false });
-                })
-                .catch(err => {
-                    console.error('[RutorPro]', err);
-                    onComplite({ items: [] });
-                });
-        },
-
-        // 🔍 Поиск (опционально)
-        search: function(params, onComplite, onError) {
-            // Worker не поддерживает поиск, возвращаем пусто
-            onComplite({ items: [] });
-        },
-
-        // 🎬 Детали карточки (опционально)
-        full: function(params, onComplite, onError) {
-            // Возвращаем те же данные — Lampa покажет карточку
-            if (params.card) {
-                onComplite(params.card);
-            } else {
-                onComplite({});
-            }
-        },
-
-        // 🎭 Человек/актёр (не используется)
-        person: function(params, onComplite, onError) {
-            onComplite({});
-        },
-
-        // ⚙️ Метаданные источника
-        discovery: function() {
-            return {
-                title: SOURCE_NAME,
-                search: this.search.bind(this),
-                params: {
-                    align_left: true,
-                    object: { source: SOURCE_ID }
-                },
-                onCancel: function() {}
-            };
-        }
+    // ===== КОНФИГ =====
+    var CONFIG = {
+        id: 'rutor_pro',
+        title: '🔥 Rutor Pro',
+        worker: 'https://my-proxy-worker.mail-internetx.workers.dev',
+        cacheTTL: 300000 // 5 минут
     };
 
-    // ====== ОБРАБОТЧИК КЛИКА ПО КАРТОЧКЕ ======
-    function onCardSelect(card) {
-        if (!card || !card._rutor_title) return;
-        
-        const query = encodeURIComponent(card._rutor_title);
-        const searchUrl = 'https://rutor.info/search/0/0/0/' + query;
-        
-        // Пробуем открыть WebView (если есть в сборке)
-        if (window.Lampa && Lampa.WebView) {
-            Lampa.WebView.open(searchUrl, {
-                title: '🔍 ' + card.title,
-                onBack: function() {
-                    if (Lampa.Router) Lampa.Router.back();
-                }
-            });
-        } else {
-            // Фоллбэк: показать ссылку
-            if (window.Lampa && Lampa.Modal) {
+    // ===== КЭШ =====
+    var cache = {};
+    var CACHE_KEYS = [];
+
+    function cachedFetch(key, url) {
+        var now = Date.now();
+        if (cache[key] && now - cache[key].ts < CONFIG.cacheTTL) {
+            return Promise.resolve(cache[key].data);
+        }
+        return fetch(url, { 
+            headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' } 
+        })
+        .then(function(res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+        })
+        .then(function(data) {
+            cache[key] = { data: data, ts: now };
+            CACHE_KEYS.push(key);
+            if (CACHE_KEYS.length > 15) {
+                delete cache[CACHE_KEYS.shift()];
+            }
+            return data;
+        });
+    }
+
+    // ===== SOURCE OBJECT =====
+    var RutorSource = {
+        name: CONFIG.id,
+        title: CONFIG.title,
+
+        // Главная страница источника
+        main: function(params, onComplite, onError) {
+            cachedFetch('rutor_cats', CONFIG.worker + '/categories')
+                .then(function(data) {
+                    var items = (data.results || []).map(function(c) {
+                        return {
+                            title: c.title,
+                            subtitle: 'Раздел торрентов',
+                            poster: c.poster_path,
+                            url: c.url,
+                            type: 'collection',
+                            source: CONFIG.id
+                        };
+                    });
+                    onComplite({ items: items, page: 1, total_pages: 1 });
+                })
+                .catch(function(e) {
+                    if (onError) onError(e);
+                    else onComplite({ items: [] });
+                });
+        },
+
+        // Открытие категории
+        collection: function(params, onComplite, onError) {
+            if (!params.url) { 
+                onComplite({ items: [], page: 1, total_pages: 0 }); 
+                return; 
+            }
+            var key = 'rutor_cat_' + params.url;
+            cachedFetch(key, CONFIG.worker + '/' + params.url)
+                .then(function(data) {
+                    var items = (data.results || []).map(function(i) {
+                        return {
+                            id: CONFIG.id + '_' + (i.id || Math.random().toString(36).substr(2, 9)),
+                            title: i.title || 'Без названия',
+                            original_title: i.original_title || '',
+                            overview: i.overview || '',
+                            poster: i.poster_path,
+                            backdrop: i.backdrop_path,
+                            rating: parseFloat(i.vote_average) || 0,
+                            year: i.year || '',
+                            type: i.type || 'movie',
+                            source: CONFIG.id,
+                            _rutor_query: i.title + (i.year ? ' (' + i.year + ')' : '')
+                        };
+                    });
+                    onComplite({ items: items, page: 1, total_pages: 1, more: false });
+                })
+                .catch(function(e) {
+                    if (onError) onError(e);
+                    else onComplite({ items: [] });
+                });
+        },
+
+        // Поиск (опционально)
+        search: function(params, onComplite, onError) {
+            onComplite({ items: [], page: 1, total_pages: 0 });
+        },
+
+        // Полная карточка (вызывается при нажатии ОК)
+        full: function(params, onComplite, onError) {
+            var card = params.card || {};
+            if (card.source === CONFIG.id && card._rutor_query) {
+                openRutorSearch(card._rutor_query, card.title);
+            }
+            onComplite(card); // Возвращаем данные, чтобы Lampa не падала
+        },
+
+        // Заглушки для обязательных методов
+        person: function(p, ok, err) { ok({}); },
+        company: function(p, ok, err) { ok({}); },
+        keyword: function(p, ok, err) { ok({}); },
+        recommend: function(p, ok, err) { ok({ items: [] }); },
+        similar: function(p, ok, err) { ok({ items: [] }); },
+        discover: function(p, ok, err) { ok({ items: [] }); },
+        history: function(p, ok, err) { ok({ items: [] }); }
+    };
+
+    // ===== ПОИСК ТОРРЕНТА =====
+    function openRutorSearch(query, title) {
+        var encoded = encodeURIComponent(query);
+        var url = 'https://rutor.info/search/0/0/0/' + encoded;
+
+        try {
+            // webOS Lampa поддерживает WebView
+            if (typeof Lampa !== 'undefined' && Lampa.WebView) {
+                Lampa.WebView.open(url, { 
+                    title: '🔍 ' + (title || 'Поиск'),
+                    onBack: function() {
+                        if (Lampa.Router) Lampa.Router.back();
+                    }
+                });
+            } else if (typeof Lampa !== 'undefined' && Lampa.Modal) {
                 Lampa.Modal.info({
                     title: '🔗 Торрент-поиск',
-                    text: 'Откройте в браузере:\n' + searchUrl,
+                    text: 'Откройте в браузере:\n' + url,
                     onConfirm: function() {}
                 });
             }
+        } catch (e) {
+            console.error('[RutorPro] WebView error:', e);
         }
     }
 
-    // ====== РЕГИСТРАЦИЯ ИСТОЧНИКА ======
-    function registerSource() {
-        // Проверяем, что Lampa загружен
-        if (!window.Lampa || !Lampa.Api || !Lampa.Api.sources) {
-            setTimeout(registerSource, 500);
+    // ===== РЕГИСТРАЦИЯ =====
+    function register() {
+        if (typeof Lampa === 'undefined' || !Lampa.Source) {
+            setTimeout(register, 300);
             return;
         }
-        
-        // Регистрируем источник
-        Lampa.Api.sources[SOURCE_ID] = RutorSource;
-        
-        // Добавляем обработчик выбора карточки
-        if (Lampa.Listener) {
-            Lampa.Listener.follow('card', function(e) {
-                if (e.type === 'select' && e.card && e.card.source === SOURCE_ID) {
-                    onCardSelect(e.card);
-                    e.abort(); // Отменяем стандартное действие
-                }
-            });
+
+        try {
+            Lampa.Source.add(RutorSource);
+            
+            // Уведомление об успехе (опционально)
+            if (Lampa.Notice) {
+                Lampa.Notice.show('🔥 Rutor Pro подключен', 2000);
+            }
+            console.log('[RutorPro] Source registered successfully');
+        } catch (e) {
+            console.error('[RutorPro] Registration failed:', e);
         }
-        
-        // Обновляем список источников в настройках
-        if (Lampa.Params && Lampa.Params.select) {
-            const sources = {
-                'tmdb': 'TMDB',
-                'cub': 'CUB',
-                'pub': 'PUB',
-                [SOURCE_ID]: SOURCE_NAME
-            };
-            Lampa.Params.select('source', sources, 'tmdb');
-        }
-        
-        console.log('[RutorPro] ✅ Source registered');
     }
 
-    // ====== ЗАПУСК ======
+    // ===== АВТОЗАПУСК =====
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', registerSource);
+        document.addEventListener('DOMContentLoaded', register);
     } else {
-        registerSource();
+        register();
     }
 
+    // Глобальный доступ (для отладки)
+    if (typeof window !== 'undefined') {
+        window.RutorProSource = RutorSource;
+    }
 })();
