@@ -3,11 +3,10 @@
 
   // === КОНФИГУРАЦИЯ ===
   var SOURCE_NAME = 'Rutor Pro';
-  // ВАЖНО: Слэш на конце обязателен!
   var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
   var ICON = '🔥';
 
-  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА (для фильмов/сериалов) ===
+  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА ===
   function normalizeItem(item) {
     if (!item) return null;
     var dateStr = item.release_date || item.first_air_date || '';
@@ -45,6 +44,8 @@
           try {
             onSuccess(JSON.parse(xhr.responseText));
           } catch (e) {
+            // ДЕБАГ: Если пришел не JSON, выводим первые 200 символов ответа
+            console.error('⚠️ Worker прислал не JSON! Ответ сервера:', xhr.responseText.substring(0, 200));
             onError(new Error('JSON parse error'));
           }
         } else {
@@ -78,12 +79,7 @@
 
           data.results.forEach(function (cat) {
             cat.source = SOURCE_NAME;
-            
-            // ФИКС 1: Lampa требует КОРОТКИЙ url для внутреннего роутера (например "top24")
             cat.url = cat.url; 
-            
-            // ФИКС 2: Убираем длинную Base64 строку от Worker. 
-            // Пустая строка заставит Lampa использовать свою стандартную иконку.
             cat.poster_path = ''; 
           });
 
@@ -97,10 +93,8 @@
         return;
       }
 
-      // 🔹 2. ЗАПРОС ФИЛЬМОВ/СЕРИАЛОВ ИЗ КАТЕГОРИИ
+      // 🔹 2. ЗАПРОС ФИЛЬМОВ
       var page = params.page || 1;
-      
-      // ФИКС 3: Так как url теперь короткий ("top24"), склеиваем его с PROXY_URL
       var requestUrl = PROXY_URL + params.url + '?page=' + page; 
 
       xhrGet(requestUrl, function (data) {
@@ -121,7 +115,7 @@
           total_pages: data.total_pages || 1,
           total_results: data.total_results || items.length,
           source: SOURCE_NAME,
-          url: params.url // Передаем короткий url для пагинации
+          url: params.url
         });
 
       }, function (err) {
@@ -130,7 +124,6 @@
       });
     };
 
-    // Полная информация о карточке
     self.full = function (params, onSuccess, onError) {
       var card = params.card || {};
       var method = (card.type === 'tv' || card.number_of_seasons) ? 'tv' : 'movie';
@@ -148,12 +141,10 @@
     };
   }
 
-  // === РЕГИСТРАЦИЯ ИСТОЧНИКА В LAMPA ===
   if (!Lampa.Api.sources[SOURCE_NAME]) {
     Lampa.Api.sources[SOURCE_NAME] = new Api();
   }
 
-  // === ДОБАВЛЕНИЕ КНОПКИ В ГЛАВНОЕ МЕНЮ ===
   function addMenuItem() {
     var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
     if (!menu) return false;
@@ -174,11 +165,9 @@
     });
     
     menu.appendChild(li);
-    console.log('✅ ' + SOURCE_NAME + ': menu item added');
     return true;
   }
 
-  // === ИНИЦИАЛИЗАЦИЯ ПЛАГИНА ===
   function init() {
     if (!addMenuItem()) {
       var obs = new MutationObserver(function () {
@@ -189,10 +178,8 @@
         obs.disconnect();
       }, 10000);
     }
-    console.log('✅ ' + SOURCE_NAME + ': plugin initialized');
   }
 
-  // Запуск инициализации
   if (window.appready) {
     init();
   } else {
