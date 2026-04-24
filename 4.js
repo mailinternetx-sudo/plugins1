@@ -7,24 +7,29 @@
   var ICON = '🔥';
   var DEFAULT_MIN_PROGRESS = 90;
 
-  // ✅ БЕЗОПАСНЫЕ геттеры для настроек (работают даже если Lampa ещё не загружен)
+  // ✅ БЕЗОПАСНЫЕ обёртки для Storage (работают до полной загрузки Lampa)
   function getStorage(key, fallback) {
-    try {
-      return window.Lampa && Lampa.Storage ? Lampa.Storage.get(key, fallback) : fallback;
-    } catch (e) { return fallback; }
+    try { return window.Lampa && Lampa.Storage ? Lampa.Storage.get(key, fallback) : fallback; }
+    catch (e) { return fallback; }
   }
-
   function setStorage(key, value) {
-    try {
-      if (window.Lampa && Lampa.Storage) Lampa.Storage.set(key, value);
-    } catch (e) {}
+    try { if (window.Lampa && Lampa.Storage) Lampa.Storage.set(key, value); } catch (e) {}
   }
 
-  // === Глобальные переменные (заполняются в init()) ===
+  // Глобальные переменные (заполняются в init())
   var SOURCE_NAME = DEFAULT_SOURCE_NAME;
   var MIN_PROGRESS = DEFAULT_MIN_PROGRESS;
 
-  // === НАСТРОЙКИ ВИДИМОСТИ КАТЕГОРИЙ (ленивая инициализация) ===
+  var CATEGORY_SETTINGS_ORDER = ['top24', 'movies', 'movies_ru', 'tv', 'tv_ru', 'televizor'];
+  var CATEGORIES = {
+    top24: 'lampac_top24',
+    movies: 'lampac_movies',
+    movies_ru: 'lampac_movies_ru',
+    tv: 'lampac_tv_shows',
+    tv_ru: 'lampac_tv_shows_ru',
+    televizor: 'lampac_televizor'
+  };
+
   function getCategoryVisibility() {
     return {
       top24: { title: '🔥 Топ за 24 часа', visible: getStorage('rutor_cat_top24', true) },
@@ -36,50 +41,28 @@
     };
   }
 
-  var CATEGORY_SETTINGS_ORDER = ['top24', 'movies', 'movies_ru', 'tv', 'tv_ru', 'televizor'];
-
-  var CATEGORIES = {
-    top24: 'lampac_top24',
-    movies: 'lampac_movies',
-    movies_ru: 'lampac_movies_ru',
-    tv: 'lampac_tv_shows',
-    tv_ru: 'lampac_tv_shows_ru',
-    televizor: 'lampac_televizor'
-  };
-
   // === ФИЛЬТРАЦИЯ ПРОСМОТРЕННЫХ ===
   function filterWatchedContent(results) {
     try {
       var hideWatched = getStorage('rutor_hide_watched', false);
       if (!hideWatched) return results;
 
-      var favorite_raw = getStorage('favorite', '{}');
+      var favData = getStorage('favorite', '{}');
       var favorite = {};
-      try {
-        favorite = typeof favorite_raw === 'string' ? JSON.parse(favorite_raw || '{}') : favorite_raw;
-      } catch (e) { favorite = {}; }
+      try { favorite = typeof favData === 'string' ? JSON.parse(favData || '{}') : favData; }
+      catch (e) { favorite = {}; }
       if (!Array.isArray(favorite.card)) favorite.card = [];
 
       return results.filter(function (item) {
         if (!item || !item.id) return true;
-
         var mediaType = (item.first_air_date || item.number_of_seasons || item.type === 'tv') ? 'tv' : 'movie';
         var checkItem = {
-          id: item.id,
-          media_type: mediaType,
-          title: item.title || item.name || '',
-          original_title: item.original_title || '',
-          poster_path: item.poster_path || '',
-          backdrop_path: item.backdrop_path || ''
+          id: item.id, media_type: mediaType, title: item.title || item.name || '',
+          original_title: item.original_title || '', poster_path: item.poster_path || '', backdrop_path: item.backdrop_path || ''
         };
-
         var fav = Lampa.Favorite.check(checkItem);
-        var watched = fav && fav.history;
-        var thrown = fav && fav.thrown;
-
-        if (thrown) return false;
-        if (!watched) return true;
-
+        if (fav && fav.thrown) return false;
+        if (!fav || !fav.history) return true;
         if (mediaType === 'movie') {
           var hash = Lampa.Utils.hash(String(item.id));
           var view = Lampa.Storage.cache('file_view', 300, {})[hash];
@@ -88,13 +71,10 @@
         }
         return true;
       });
-    } catch (e) {
-      console.warn('filterWatchedContent error:', e);
-      return results;
-    }
+    } catch (e) { return results; }
   }
 
-  // === НОРМАЛИЗАЦИЯ ДАННЫХ ===
+  // === НОРМАЛИЗАЦИЯ ДАННЫХ ОТ WORKER'А ===
   function normalizeData(json, categoryUrl) {
     function toTmdbPath(v) {
       if (!v || typeof v !== 'string') return '';
@@ -107,34 +87,10 @@
     }
 
     var results = (json.results || []).map(function (item) {
-      if (item.url && !/^\d+$/.test(String(item.id))) {
-        return {
-          id: item.id,
-          title: item.title,
-          name: item.name || item.title,
-          original_title: item.title,
-          poster_path: item.poster_path || '/img/img_broken.svg',
-          backdrop_path: '',
-          overview: item.overview || 'Нажмите для перехода',
-          vote_average: 0,
-          type: 'category',
-          media_type: 'category',
-          source: SOURCE_NAME,
-          url: item.url,
-          promo_title: item.title,
-          promo: item.overview || item.title
-        };
-      }
-
       var posterPath = toTmdbPath(item.poster_path);
       var backdropPath = toTmdbPath(item.backdrop_path);
-      
-      if (!posterPath && item.poster_path && /^https?:\/\//i.test(item.poster_path)) {
-        posterPath = '/t/p/w500' + item.poster_path.replace(/^https?:\/\/[^\/]+\/t\/p\/w\d+\//, '');
-      }
-      if (!backdropPath && item.backdrop_path && /^https?:\/\//i.test(item.backdrop_path)) {
-        backdropPath = '/t/p/original' + item.backdrop_path.replace(/^https?:\/\/[^\/]+\/t\/p\/original\//, '');
-      }
+      if (!posterPath && item.poster_path) posterPath = '/t/p/w500' + item.poster_path.replace(/^https?:\/\/[^\/]+\/t\/p\/w\d+\//, '');
+      if (!backdropPath && item.backdrop_path) backdropPath = '/t/p/original' + item.backdrop_path.replace(/^https?:\/\/[^\/]+\/t\/p\/original\//, '');
 
       return {
         id: item.id,
@@ -174,15 +130,12 @@
       source: SOURCE_NAME
     };
   }
+
   // === API SERVICE ===
   function RutorApiService() {
     var self = this;
-    
-    // Безопасная инициализация network
-    try {
-      self.network = new Lampa.Reguest();
-    } catch (e) {
-      console.warn('Lampa.Reguest not available, using fallback');
+    try { self.network = new Lampa.Reguest(); }
+    catch (e) {
       self.network = {
         silent: function(url, onSuccess, onError) {
           var xhr = new XMLHttpRequest();
@@ -190,8 +143,7 @@
           xhr.onreadystatechange = function() {
             if (xhr.readyState === 4) {
               if (xhr.status >= 200 && xhr.status < 300) {
-                try { onSuccess(JSON.parse(xhr.responseText)); }
-                catch (e) { onError(e); }
+                try { onSuccess(JSON.parse(xhr.responseText)); } catch (e) { onError(e); }
               } else { onError(new Error('HTTP ' + xhr.status)); }
             }
           };
@@ -212,34 +164,23 @@
       params = params || {};
       var category = params.url || CATEGORIES.movies;
       var page = params.page || 1;
-      var requestUrl = BASE_URL + category + '?page=' + page;
-      self.get(requestUrl, params, function (data) {
+      self.get(BASE_URL + category + '?page=' + page, params, function (data) {
         onComplete({
-          results: data.results,
-          page: data.page,
-          total_pages: data.total_pages,
-          total_results: data.total_results
+          results: data.results, page: data.page,
+          total_pages: data.total_pages, total_results: data.total_results
         });
       }, onError);
     };
 
-    // ✅ ИСПРАВЛЕННЫЙ self.full
+    // ✅ ИСПРАВЛЕННЫЙ self.full (защита от undefined)
     self.full = function (params, onSuccess, onError) {
       params = params || {};
       var card = params.card || params.item || params.data || {};
       
       if (card.url && (card.type === 'category' || card.media_type === 'category')) {
-        try {
-          Lampa.Activity.push({
-            title: card.title,
-            component: 'category',
-            source: SOURCE_NAME,
-            url: card.url,
-            page: 1
-          });
-        } catch (e) { console.warn('Navigation failed:', e); }
-        onSuccess(card);
-        return;
+        try { Lampa.Activity.push({ title: card.title, component: 'category', source: SOURCE_NAME, url: card.url, page: 1 }); }
+        catch (e) { console.warn('Nav failed:', e); }
+        onSuccess(card); return;
       }
       
       var rawId = card.id || card.tmdb_id || card.kinopoisk_id;
@@ -247,125 +188,86 @@
       var isTmdbId = /^\d+$/.test(idStr);
       
       if (!isTmdbId || !rawId) {
-        var safeCard = {
-          id: rawId || 0,
-          title: card.title || card.name || 'Без названия',
-          name: card.name || card.title || 'Без названия',
-          original_title: card.original_title || '',
-          poster_path: card.poster_path || '',
-          backdrop_path: card.backdrop_path || '',
-          overview: card.overview || '',
-          vote_average: card.vote_average || 0,
-          type: card.type === 'tv' ? 'tv' : 'movie',
-          media_type: card.type === 'tv' ? 'tv' : 'movie',
-          source: SOURCE_NAME
-        };
-        onSuccess(safeCard);
+        onSuccess({
+          id: rawId || 0, title: card.title || card.name || 'Без названия', name: card.name || card.title || '',
+          original_title: card.original_title || '', poster_path: card.poster_path || '', backdrop_path: card.backdrop_path || '',
+          overview: card.overview || '', vote_average: card.vote_average || 0,
+          type: card.type === 'tv' ? 'tv' : 'movie', media_type: card.type === 'tv' ? 'tv' : 'movie', source: SOURCE_NAME
+        });
         return;
       }
       
-      var method = 'movie';
-      if (card.type === 'tv' || card.media_type === 'tv' || 
-          card.number_of_seasons || card.seasons || card.first_air_date) {
-        method = 'tv';
-      }
-      
+      var method = (card.type === 'tv' || card.media_type === 'tv' || card.number_of_seasons || card.seasons || card.first_air_date) ? 'tv' : 'movie';
       var tmdbParams = {
-        card: {
-          id: parseInt(idStr, 10),
-          title: card.title,
-          name: card.name,
-          original_title: card.original_title,
-          poster_path: card.poster_path,
-          backdrop_path: card.backdrop_path,
-          overview: card.overview,
-          vote_average: card.vote_average,
-          type: card.type,
-          media_type: card.media_type,
-          release_date: card.release_date,
-          first_air_date: card.first_air_date,
-          number_of_seasons: card.number_of_seasons
-        },
-        method: method,
-        lang: params.lang,
-        language: params.language
+        card: { id: parseInt(idStr, 10), title: card.title, name: card.name, original_title: card.original_title,
+                poster_path: card.poster_path, backdrop_path: card.backdrop_path, overview: card.overview,
+                vote_average: card.vote_average, type: card.type, media_type: card.media_type,
+                release_date: card.release_date, first_air_date: card.first_air_date, number_of_seasons: card.number_of_seasons },
+        method: method, lang: params.lang, language: params.language
       };
       
       try {
         if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
-          Lampa.Api.sources.tmdb.full(tmdbParams, onSuccess, function(err) {
-            console.warn('TMDB full failed:', err);
-            onSuccess(tmdbParams.card);
-          });
-        } else {
-          onSuccess(tmdbParams.card);
-        }
-      } catch (e) {
-        console.error('TMDB call error:', e);
-        onSuccess(tmdbParams.card);
-      }
+          Lampa.Api.sources.tmdb.full(tmdbParams, onSuccess, function() { onSuccess(tmdbParams.card); });
+        } else { onSuccess(tmdbParams.card); }
+      } catch (e) { console.error('TMDB call error:', e); onSuccess(tmdbParams.card); }
     };
 
+    // ✅ ИСПРАВЛЕННЫЙ self.category (отображает 6 категорий вместо пустого листа)
     self.category = function (params, onSuccess, onError) {
       params = params || {};
-
-      if (!params.url || params.url === '__categories__') {
+      
+      // Ловим все варианты "первого входа": '', '__categories__', undefined, null
+      if (!params.url || params.url === '' || params.url === '__categories__') {
         var cats = [];
         var catVis = getCategoryVisibility();
+        
         CATEGORY_SETTINGS_ORDER.forEach(function (key) {
           if (catVis[key].visible) {
             cats.push({
-              id: 'rutor_' + key,
+              id: 'rutor_cat_' + key,
               title: catVis[key].title,
-              name: catVis[key].title,
-              original_title: catVis[key].title,
+              name: catVis[key].title,              // ✅ Обязательно для Lampa UI
+              original_title: catVis[key].title,    // ✅ Обязательно для Lampa UI
               url: CATEGORIES[key],
               source: SOURCE_NAME,
-              type: 'category',
-              media_type: 'category',
-              poster_path: '/img/img_broken.svg',
+              type: 'movie',                        // ✅ Используем стандартный шаблон карточки
+              media_type: 'movie',
+              poster_path: '',                      // ✅ Пусто → Lampa подставит иконку по умолчанию
               backdrop_path: '',
-              overview: 'Нажмите для перехода в раздел',
-              promo: catVis[key].title,
-              promo_title: catVis[key].title,
+              overview: '',
               vote_average: 0,
               rating: { kp: 0, tmdb: 0 },
-              original_language: 'en',
-              year: 2024
+              year: 0,
+              promo_title: catVis[key].title,
+              promo: ''
             });
           }
         });
-        onSuccess({
-          results: cats,
-          page: 1,
-          total_pages: 1,
-          total_results: cats.length,
-          source: SOURCE_NAME
-        });
+
+        console.log('📂 Rutor Pro: возвращаю', cats.length, 'категорий');
+        onSuccess({ results: cats, page: 1, total_pages: 1, total_results: cats.length, source: SOURCE_NAME });
         return;
       }
 
+      // Загрузка списка контента
       self.list(params, function (data) {
         onSuccess({
-          results: data.results,
-          page: data.page,
-          total_pages: data.total_pages,
-          total_results: data.total_results,
-          url: params.url,
-          source: SOURCE_NAME
+          results: data.results, page: data.page,
+          total_pages: data.total_pages, total_results: data.total_results,
+          url: params.url, source: SOURCE_NAME
         });
       }, onError);
     };
   }
+
   // === РЕГИСТРАЦИЯ ИСТОЧНИКА ===
   var rutorApi = new RutorApiService();
-  
   try {
     if (Lampa.Api && Lampa.Api.sources) {
       Lampa.Api.sources.rutorpro = rutorApi;
       Object.defineProperty(Lampa.Api.sources, DEFAULT_SOURCE_NAME, {
-        get: function () { return rutorApi; },
-        configurable: true
+        get: function () { return rutorApi; }, configurable: true
       });
     }
   } catch (e) { console.warn('Source registration failed:', e); }
@@ -374,27 +276,18 @@
   function registerSettings() {
     try {
       if (!Lampa.SettingsApi) return;
-
-      Lampa.SettingsApi.addComponent({
-        component: 'rutor_settings',
-        name: DEFAULT_SOURCE_NAME,
-        icon: ICON
-      });
+      Lampa.SettingsApi.addComponent({ component: 'rutor_settings', name: DEFAULT_SOURCE_NAME, icon: ICON });
 
       Lampa.SettingsApi.addParam({
         component: 'rutor_settings',
-        param: {
-          name: 'rutor_hide_watched',
-          type: 'trigger',
-          default: getStorage('rutor_hide_watched', false)
-        },
+        param: { name: 'rutor_hide_watched', type: 'trigger', default: getStorage('rutor_hide_watched', false) },
         field: { name: 'Скрыть просмотренные', description: 'Не показывать просмотренные' },
-        onChange: function (value) {
-          setStorage('rutor_hide_watched', value === true);
+        onChange: function (v) {
+          setStorage('rutor_hide_watched', v === true);
           try {
             var active = Lampa.Activity.active();
             if (active && active.source === DEFAULT_SOURCE_NAME && active.activity_line) {
-              active.activity_line.listener.send({ type: 'append', data: active.activity_line.card_data, line: active.activity_line });
+              active.activity_line.listener.send({ type: 'append',  active.activity_line.card_data, line: active.activity_line });
             }
           } catch (e) {}
         }
@@ -402,44 +295,25 @@
 
       Lampa.SettingsApi.addParam({
         component: 'rutor_settings',
-        param: {
-          name: 'rutor_min_progress',
-          type: 'select',
-          values: { '50':'50%','70':'70%','80':'80%','90':'90%','95':'95%','100':'100%' },
-          default: String(DEFAULT_MIN_PROGRESS)
-        },
+        param: { name: 'rutor_min_progress', type: 'select',
+                 values: { '50':'50%','70':'70%','80':'80%','90':'90%','95':'95%','100':'100%' }, default: String(DEFAULT_MIN_PROGRESS) },
         field: { name: 'Порог просмотра', description: 'Мин. % для скрытия' },
-        onChange: function (v) {
-          var val = parseInt(v) || DEFAULT_MIN_PROGRESS;
-          setStorage('rutor_min_progress', val);
-          MIN_PROGRESS = val;
-        }
+        onChange: function (v) { var val = parseInt(v) || DEFAULT_MIN_PROGRESS; setStorage('rutor_min_progress', val); MIN_PROGRESS = val; }
       });
 
       Lampa.SettingsApi.addParam({
         component: 'rutor_settings',
         param: { name: 'rutor_source_name', type: 'input', default: DEFAULT_SOURCE_NAME },
         field: { name: 'Название в меню', description: 'Как отображать источник' },
-        onChange: function (v) {
-          setStorage('rutor_source_name', v);
-          SOURCE_NAME = v || DEFAULT_SOURCE_NAME;
-          try {
-            var item = document.querySelector('[data-rutor-source] .menu__text');
-            if (item) item.textContent = SOURCE_NAME;
-          } catch (e) {}
-        }
+        onChange: function (v) { setStorage('rutor_source_name', v); SOURCE_NAME = v || DEFAULT_SOURCE_NAME;
+          try { var item = document.querySelector('[data-rutor-source] .menu__text'); if (item) item.textContent = SOURCE_NAME; } catch(e){} }
       });
 
       CATEGORY_SETTINGS_ORDER.forEach(function (key) {
         Lampa.SettingsApi.addParam({
           component: 'rutor_settings',
-          param: {
-            name: 'rutor_cat_' + key,
-            type: 'trigger',
-            default: getCategoryVisibility()[key].visible
-          },
-          field: { name: getCategoryVisibility()[key].title },
-          onChange: function () {}
+          param: { name: 'rutor_cat_' + key, type: 'trigger', default: getCategoryVisibility()[key].visible },
+          field: { name: getCategoryVisibility()[key].title }, onChange: function() {}
         });
       });
     } catch (e) { console.warn('Settings registration failed:', e); }
@@ -458,16 +332,9 @@
       li.innerHTML = '<div class="menu__ico">' + ICON + '</div><div class="menu__text">' + DEFAULT_SOURCE_NAME + '</div>';
       
       li.addEventListener('hover:enter', function () {
-        try {
-          Lampa.Activity.push({
-            title: SOURCE_NAME,
-            component: 'category',
-            source: SOURCE_NAME,
-            url: '__categories__'
-          });
-        } catch (e) { console.warn('Menu navigation failed:', e); }
+        try { Lampa.Activity.push({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, url: '' }); }
+        catch (e) { console.warn('Menu nav failed:', e); }
       });
-
       menu.appendChild(li);
       return true;
     } catch (e) { return false; }
@@ -480,7 +347,7 @@
       Lampa.Listener.follow('line', function (event) {
         if (event.type !== 'append') return;
         var data = event.data;
-        if (!data || data.source !== SOURCE_NAME || !data.url || data.url === '__categories__') return;
+        if (!data || data.source !== SOURCE_NAME || !data.url || data.url === '') return;
 
         var desired = 20;
         var results = filterWatchedContent(data.results || []).filter(function (i) { return i && i.id; });
@@ -508,31 +375,25 @@
 
   // === ИНИЦИАЛИЗАЦИЯ ===
   function init() {
-    // Заполняем глобальные переменные из настроек
     try {
       SOURCE_NAME = getStorage('rutor_source_name', DEFAULT_SOURCE_NAME);
       MIN_PROGRESS = parseInt(getStorage('rutor_min_progress', DEFAULT_MIN_PROGRESS)) || DEFAULT_MIN_PROGRESS;
     } catch (e) {}
-
-    registerSettings();
     
+    registerSettings();
     if (!addMenuItem()) {
       var obs = new MutationObserver(function () { if (addMenuItem()) obs.disconnect(); });
       obs.observe(document.body, { childList: true, subtree: true });
       setTimeout(function () { obs.disconnect(); }, 10000);
     }
-    
     registerLineListener();
     console.log('✅ ' + SOURCE_NAME + ': initialized safely');
   }
 
-  // === ЗАПУСК ТОЛЬКО ПОСЛЕ ГОТОВНОСТИ LAMPA ===
-  if (window.Lampa && window.appready) {
-    init();
-  } else if (window.Lampa) {
-    Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); });
-  } else {
-    // Если Lampa ещё не загружена — ждём
+  // === ЗАПУСК ===
+  if (window.Lampa && window.appready) { init(); }
+  else if (window.Lampa) { Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); }); }
+  else {
     var checkLampa = setInterval(function () {
       if (window.Lampa) {
         clearInterval(checkLampa);
@@ -540,8 +401,6 @@
         else { Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); }); }
       }
     }, 100);
-    // Таймаут на случай, если Lampa не загрузится
     setTimeout(function () { clearInterval(checkLampa); }, 15000);
   }
-
 })();
