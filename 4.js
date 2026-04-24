@@ -3,26 +3,28 @@
 
   // === КОНФИГУРАЦИЯ ===
   var SOURCE_NAME = 'Rutor Pro';
-  var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; // Убедитесь, что тут слэш на конце
+  // ВАЖНО: Слэш на конце обязателен!
+  var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
   var ICON = '🔥';
 
   // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА (для фильмов/сериалов) ===
   function normalizeItem(item) {
     if (!item) return null;
     var dateStr = item.release_date || item.first_air_date || '';
-    var year = dateStr ? parseInt(dateStr.substring(0, 4), 10) : 0;
+    var year = dateStr ? parseInt(dateStr.substring(0, 4), 10) : (item.year || 0);
     
     return {
-      id: item.id || 0,
+      id: parseInt(item.id) || 0, // Lampa требует число
       title: item.title || item.name || 'Без названия',
       name: item.name || item.title || 'Без названия',
       original_title: item.original_title || '',
+      // Worker теперь отдает ПОЛНЫЕ https ссылки, просто передаем их дальше
       poster_path: item.poster_path || '',
       backdrop_path: item.backdrop_path || '',
       overview: item.overview || '',
       vote_average: parseFloat(item.vote_average) || 0,
-      type: item.type === 'tv' ? 'tv' : 'movie',
-      media_type: item.type === 'tv' ? 'tv' : 'movie',
+      type: item.type || 'movie',
+      media_type: item.media_type || item.type || 'movie', // Гарантируем наличие поля
       original_language: item.original_language || 'en',
       release_date: item.release_date || '',
       first_air_date: item.first_air_date || '',
@@ -64,7 +66,7 @@
     self.category = function (params, onSuccess, onError) {
       params = params || {};
 
-      // 🔹 1. ЗАПРОС СПИСКА КАТЕГОРИЙ С WORKER
+      // 🔹 1. ЗАПРОС СПИСКА КАТЕГОРИЙ
       if (!params.url || params.url === '__categories__') {
         
         var catUrl = PROXY_URL + 'categories';
@@ -75,30 +77,13 @@
             return;
           }
 
-          var categories = data.results;
-
-          // ⚠️ КРИТИЧНО ДЛЯ LAMPA UI: 
-          // Lampa скрывает карточки без постера или с нестандартным type.
-          // Приводим их к формату "фильм", чтобы они отрисовались как папки.
-          categories.forEach(function (cat) {
-            cat.poster_path = '/img/img_broken.svg'; // валидный путь-заглушка
-            cat.backdrop_path = '';
-            cat.type = 'movie';
-            cat.media_type = 'movie';
-            cat.vote_average = 0;
-            cat.original_title = cat.title;
+          // Worker уже вернул категории в идеальном формате (с Base64 заглушками, url, media_type)
+          // Нам остается только добавить метку source и отдать в Lampa
+          data.results.forEach(function (cat) {
             cat.source = SOURCE_NAME;
-            cat.overview = 'Нажмите для перехода в раздел';
-            cat.promo = cat.title;
           });
 
-          onSuccess({
-            results: categories,
-            page: 1,
-            total_pages: 1,
-            total_results: categories.length,
-            source: SOURCE_NAME
-          });
+          onSuccess(data);
 
         }, function (err) {
           console.error('Rutor Pro categories error:', err);
@@ -108,9 +93,8 @@
         return;
       }
 
-      // 🔹 2. ЗАПРОС ФИЛЬМОВ/СЕРИАЛОВ ИЗ КОНКРЕТНОЙ КАТЕГОРИИ
+      // 🔹 2. ЗАПРОС ФИЛЬМОВ/СЕРИАЛОВ ИЗ КАТЕГОРИИ
       var page = params.page || 1;
-      // Worker отдает фильмы по URL вида /movies, /top24 и т.д.
       var requestUrl = PROXY_URL + params.url + '?page=' + page; 
 
       xhrGet(requestUrl, function (data) {
@@ -122,7 +106,7 @@
         var items = data.results
           .map(normalizeItem)
           .filter(function (item) {
-            return item && item.id;
+            return item && item.id; // Отфильтровываем пустые карточки
           });
 
         onSuccess({
@@ -131,7 +115,7 @@
           total_pages: data.total_pages || 1,
           total_results: data.total_results || items.length,
           source: SOURCE_NAME,
-          url: params.url // Возвращаем URL, чтобы Lampa понимала, куда листать дальше
+          url: params.url // Сохраняем url категории, чтобы Lampa знала, откуда листать
         });
 
       }, function (err) {
@@ -140,17 +124,21 @@
       });
     };
 
-    // Полная информация о карточке (подтягиваем описание и Seasons у TMDB)
+    // Полная информация о карточке
     self.full = function (params, onSuccess, onError) {
       var card = params.card || {};
+      // Если у карточки есть сезоны или тип tv — запрашиваем сериал, иначе фильм
       var method = (card.type === 'tv' || card.number_of_seasons) ? 'tv' : 'movie';
       
+      // Делегируем запрос описания, актеров и трейлеров встроенному источнику TMDB в Lampa
       if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
         Lampa.Api.sources.tmdb.full({
           card: card,
           method: method
         }, onSuccess, function () {
-          onSuccess(card); // Если TMDB не ответил, отдаем то, что есть
+          // Если TMDB не ответил (например, фильм русский и его нет в TMDB), 
+          // открываем карточку на тех данных, что прислал наш Worker
+          onSuccess(card); 
         });
       } else {
         onSuccess(card);
@@ -158,15 +146,16 @@
     };
   }
 
-  // === РЕГИСТРАЦИЯ ИСТОЧНИКА ===
+  // === РЕГИСТРАЦИЯ ИСТОЧНИКА В LAMPA ===
   if (!Lampa.Api.sources[SOURCE_NAME]) {
     Lampa.Api.sources[SOURCE_NAME] = new Api();
   }
 
-  // === ДОБАВЛЕНИЕ В МЕНЮ ===
+  // === ДОБАВЛЕНИЕ КНОПКИ В ГЛАВНОЕ МЕНЮ ===
   function addMenuItem() {
     var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
     if (!menu) return false;
+    // Защита от дублирования кнопки
     if (menu.querySelector('[data-rutor-source]')) return true;
 
     var li = document.createElement('li');
@@ -179,7 +168,7 @@
         title: SOURCE_NAME,
         component: 'category',
         source: SOURCE_NAME,
-        url: '__categories__' // Маркер, по которому плагин поймет, что нужно стучаться в /categories
+        url: '__categories__' 
       });
     });
     
@@ -188,13 +177,15 @@
     return true;
   }
 
-  // === ИНИЦИАЛИЗАЦИЯ ===
+  // === ИНИЦИАЛИЗАЦИЯ ПЛАГИНА ===
   function init() {
     if (!addMenuItem()) {
+      // Если меню Lampa еще не отрисовано (например, только запуск приложения), ждем его появления
       var obs = new MutationObserver(function () {
         if (addMenuItem()) obs.disconnect();
       });
       obs.observe(document.body, { childList: true, subtree: true });
+      // Таймаут на случай ошибки, чтобы не висел наблюдатель вечно
       setTimeout(function () {
         obs.disconnect();
       }, 10000);
@@ -202,7 +193,7 @@
     console.log('✅ ' + SOURCE_NAME + ': plugin initialized');
   }
 
-  // Запуск
+  // Запуск инициализации
   if (window.appready) {
     init();
   } else {
