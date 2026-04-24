@@ -48,15 +48,12 @@
                 var lines = [];
                 for(var i=0; i<CATEGORIES.length; i++){
                     lines.push({
+                        id: 'rutor_cat_' + i,
                         title: CATEGORIES[i].title,
-                        url: CATEGORIES[i].path,
-                        type: 'line',
-                        source: SOURCE,
-                        more: true,
-                        page: 1
+                        url: CATEGORIES[i].path
                     });
                 }
-                onSuccess(lines);
+                onSuccess({ results: lines });
                 return;
             }
             
@@ -72,7 +69,10 @@
                         url: params.url
                     });
                 },
-                onError
+                function(err) {
+                    console.error('Rutor Pro: Ошибка запроса категории', err);
+                    onError(err);
+                }
             );
         };
 
@@ -87,12 +87,9 @@
         };
     }
 
-    // Регистрация API
     if(!Lampa.Api.sources[SOURCE]) Lampa.Api.sources[SOURCE] = new Api();
 
-    // --- НОВАЯ НАДЕЖНАЯ ФУНКЦИЯ ДОБАВЛЕНИЯ В МЕНЮ ---
     function initMenu() {
-        // Ищем меню (пробуем два варианта селектора, так как в разных версиях Lampa они могут отличаться)
         var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
         
         if (menu && !document.querySelector('[data-rutor-pro-array]')) {
@@ -104,28 +101,17 @@
                 Lampa.Activity.push({ component:'category', source:SOURCE, title:SOURCE });
             });
             menu.appendChild(li);
-            console.log('Rutor Pro: Кнопка успешно добавлена в меню!');
-            return true; // Возвращаем true, если удалось добавить
+            console.log('Rutor Pro: Успешно загружен!');
+            return true;
         }
-        return false; // Меню еще нет
+        return false;
     }
 
-    // Пытаемся добавить сразу (на случай, если скрипт загружается поздно)
     if (!initMenu()) {
-        // Если меню не найдено, запускаем наблюдатель за изменениями DOM
         var observer = new MutationObserver(function(mutations, obs) {
-            if (initMenu()) {
-                obs.disconnect(); // Как только кнопка добавлена, прекращаем наблюдать
-            }
+            if (initMenu()) obs.disconnect();
         });
-        
-        // Начинаем следить за появлением элементов в body
         observer.observe(document.body, { childList: true, subtree: true });
-
-        // Страховка: если что-то пойдет не так, прекращаем искать через 10 секунд, чтобы не тормозить браузер
-        setTimeout(function() {
-            observer.disconnect();
-        }, 10000);
+        setTimeout(function() { observer.disconnect(); }, 10000);
     }
-
 })();
