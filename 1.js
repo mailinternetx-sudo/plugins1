@@ -1,34 +1,32 @@
 /**
- * 🎬 Rutor Pro Plugin for Lampa
- * Добавляет источник в раздел "Источники"
+ * 🔥 Rutor Pro Source for Lampa
+ * Интеграция с вашим Cloudflare Worker
  */
 (function() {
     'use strict';
 
-    const CONFIG = {
-        workerUrl: 'https://my-proxy-worker.mail-internetx.workers.dev',
-        pluginId: 'rutor_pro',
-        sourceTitle: '🔥 Rutor Pro',
-        sourceDesc: 'Торренты с постерами',
-        sourceIcon: '🗂️'
-    };
-
+    // ====== КОНФИГ ======
+    const WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev';
+    const SOURCE_ID = 'rutor_pro';
+    const SOURCE_NAME = '🔥 Rutor Pro';
+    
     const cache = new Map();
-    const CACHE_TTL = 5 * 60 * 1000;
+    const CACHE_TTL = 5 * 60 * 1000; // 5 минут
 
-    function cachedFetch(url, key) {
+    // ====== КЭШ ======
+    function cachedFetch(key, url) {
         const cached = cache.get(key);
         if (cached && Date.now() - cached.ts < CACHE_TTL) {
             return Promise.resolve(cached.data);
         }
         return fetch(url)
-            .then(res => {
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return res.json();
+            .then(r => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
             })
             .then(data => {
-                cache.set(key, { data, ts: Date.now() });
-                if (cache.size > 30) {
+                cache.set(key, { data: data, ts: Date.now() });
+                if (cache.size > 20) {
                     const oldest = [...cache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
                     cache.delete(oldest[0]);
                 }
@@ -36,181 +34,159 @@
             });
     }
 
-    const RutorPro = {
-        init: function() {
-            // Ждём готовности Lampa
-            if (typeof Lampa === 'undefined' || !Lampa.Source) {
-                setTimeout(() => this.init(), 500);
-                return;
-            }
-            this.registerSource();
-            this.bindRoutes();
-            console.log('[RutorPro] ✅ Loaded');
-        },
-
-        // 📁 Регистрация источника
-        registerSource: function() {
-            Lampa.Source.add({
-                id: CONFIG.pluginId,
-                title: CONFIG.sourceTitle,
-                subtitle: CONFIG.sourceDesc,
-                icon: CONFIG.sourceIcon,
-                // ✅ Это добавит плитку в раздел "Источники"
-                onReady: (view, params) => this.showCategories(view, params),
-                onBack: () => Lampa.Router.back(),
-                // Долгое нажатие — инфо
-                onMore: () => {
-                    Lampa.Modal.info({
-                        title: CONFIG.sourceTitle,
-                        text: 'Торрент-каталог с постерами из TMDB/KinoPoisk\n\nИсточник: rutor.info\nПрокси: Cloudflare Workers'
-                    });
-                }
-            });
-        },
-
-        // 🗺️ Маршруты
-        bindRoutes: function() {
-            Lampa.Router.add(CONFIG.pluginId + '/categories', () => this.showCategories());
-            Lampa.Router.add(CONFIG.pluginId + '/category/:url', (p) => this.showCategory(p.url));
-        },
-
-        // 📂 Показать категории
-        showCategories: function(view, params) {
-            Lampa.Loading.show();
-            
-            cachedFetch(CONFIG.workerUrl + '/categories', 'rutor:categories')
+    // ====== SOURCE OBJECT (обязательные методы) ======
+    const RutorSource = {
+        
+        // 🏠 Главная страница источника — показывает категории
+        main: function(params, onComplite, onError) {
+            cachedFetch('rutor:main', WORKER_URL + '/categories')
                 .then(data => {
-                    Lampa.Loading.hide();
-                    if (data.error) throw new Error(data.message);
-
-                    const items = (data.results || []).map(cat => ({
+                    const collections = (data.results || []).map(cat => ({
                         title: cat.title,
-                        subtitle: 'Раздел',
-                        poster: cat.poster_path,
-                        id: cat.id,
                         url: cat.url,
-                        onEnter: () => {
-                            Lampa.Router.open(CONFIG.pluginId + '/category/' + cat.url);
-                        },
-                        onMore: () => {
-                            Lampa.Modal.open({
-                                title: cat.title,
-                                items: [{
-                                    title: '🔄 Обновить',
-                                    onSelect: () => {
-                                        cache.delete('rutor:categories');
-                                        this.showCategories(view, params);
-                                    }
-                                }]
-                            });
-                        }
+                        type: 'collection',
+                        poster: cat.poster_path,
+                        items: [] // пустой массив — Lampa сам загрузит контент при клике
                     }));
-
-                    // Если вызван через onReady — рендерим в view
-                    if (view && view.render) {
-                        view.render(items, {
-                            title: CONFIG.sourceTitle,
-                            subtitle: 'Категории',
-                            type: 'grid',
-                            onBack: () => Lampa.Router.back()
-                        });
-                    } else {
-                        // Или через Screen (альтернатива)
-                        Lampa.Screen.show({
-                            title: CONFIG.sourceTitle,
-                            items: items,
-                            type: 'grid',
-                            onBack: () => Lampa.Router.back()
-                        });
-                    }
+                    onComplite({ collections: collections });
                 })
                 .catch(err => {
-                    Lampa.Loading.hide();
-                    Lampa.Notice.show('Ошибка: ' + err.message, 4000);
                     console.error('[RutorPro]', err);
+                    onComplite({ collections: [] });
                 });
         },
 
-        // 🎬 Показать контент категории
-        showCategory: function(categoryUrl) {
-            Lampa.Loading.show();
+        // 📁 Коллекция (категория) — показывает фильмы
+        collection: function(params, onComplite, onError) {
+            const catUrl = params.url;
+            if (!catUrl) { onComplite({ items: [] }); return; }
             
-            cachedFetch(CONFIG.workerUrl + '/' + categoryUrl, 'rutor:cat:' + categoryUrl)
+            cachedFetch('rutor:cat:' + catUrl, WORKER_URL + '/' + catUrl)
                 .then(data => {
-                    Lampa.Loading.hide();
-                    if (data.error) throw new Error(data.message);
-
                     const items = (data.results || []).map(item => ({
+                        id: SOURCE_ID + '_' + item.id,
                         title: item.title,
-                        subtitle: this.formatSubtitle(item),
+                        original_title: item.original_title,
+                        overview: item.overview || '',
                         poster: item.poster_path,
                         backdrop: item.backdrop_path,
-                        id: item.id,
-                        year: item.year,
-                        rating: item.vote_average,
-                        type: item.type || 'movie',
-                        onEnter: () => this.openTorrentSearch(item),
-                        onMore: () => this.showItemMenu(item)
+                        rating: item.vote_average || 0,
+                        year: item.year || '',
+                        type: item.type || item.media_type || 'movie',
+                        source: SOURCE_ID,
+                        // Для поиска торрента передаём оригинальное название
+                        _rutor_title: item.title + (item.year ? ' (' + item.year + ')' : '')
                     }));
-
-                    Lampa.Screen.show({
-                        title: CONFIG.sourceTitle,
-                        subtitle: categoryUrl,
-                        items: items,
-                        type: 'media',
-                        backdrop: items[0]?.backdrop,
-                        onBack: () => Lampa.Router.back()
-                    });
+                    onComplite({ items: items, page: 1, total_pages: 1, more: false });
                 })
                 .catch(err => {
-                    Lampa.Loading.hide();
-                    Lampa.Notice.show('Ошибка загрузки: ' + err.message, 4000);
+                    console.error('[RutorPro]', err);
+                    onComplite({ items: [] });
                 });
         },
 
-        // 🔍 Поиск торрента
-        openTorrentSearch: function(item) {
-            const query = encodeURIComponent(item.title + (item.year ? ' ' + item.year : ''));
-            const url = 'https://rutor.info/search/0/0/0/' + query;
-            
-            if (Lampa.WebView) {
-                Lampa.WebView.open(url, { title: '🔍 ' + item.title });
+        // 🔍 Поиск (опционально)
+        search: function(params, onComplite, onError) {
+            // Worker не поддерживает поиск, возвращаем пусто
+            onComplite({ items: [] });
+        },
+
+        // 🎬 Детали карточки (опционально)
+        full: function(params, onComplite, onError) {
+            // Возвращаем те же данные — Lampa покажет карточку
+            if (params.card) {
+                onComplite(params.card);
             } else {
-                Lampa.Modal.info({
-                    title: '🔗 Торрент-поиск',
-                    text: url,
-                    onConfirm: () => {}
-                });
+                onComplite({});
             }
         },
 
-        // 📋 Меню элемента
-        showItemMenu: function(item) {
-            Lampa.Modal.open({
-                title: item.title,
-                items: [
-                    { title: '🔍 Найти торрент', onSelect: () => this.openTorrentSearch(item) },
-                    { title: 'ℹ️ Описание', onSelect: () => Lampa.Modal.info({ title: item.title, text: item.overview || 'Нет описания' }) },
-                    { title: '⭐ ' + (item.vote_average || 'N/A'), disabled: true },
-                    { title: '📅 ' + (item.year || '?'), disabled: true }
-                ]
-            });
+        // 🎭 Человек/актёр (не используется)
+        person: function(params, onComplite, onError) {
+            onComplite({});
         },
 
-        formatSubtitle: function(item) {
-            const parts = [];
-            if (item.year) parts.push(item.year);
-            if (item.vote_average > 0) parts.push('⭐ ' + item.vote_average.toFixed(1));
-            return parts.join(' • ') || '—';
+        // ⚙️ Метаданные источника
+        discovery: function() {
+            return {
+                title: SOURCE_NAME,
+                search: this.search.bind(this),
+                params: {
+                    align_left: true,
+                    object: { source: SOURCE_ID }
+                },
+                onCancel: function() {}
+            };
         }
     };
 
-    // Автозапуск
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => RutorPro.init());
-    } else {
-        RutorPro.init();
+    // ====== ОБРАБОТЧИК КЛИКА ПО КАРТОЧКЕ ======
+    function onCardSelect(card) {
+        if (!card || !card._rutor_title) return;
+        
+        const query = encodeURIComponent(card._rutor_title);
+        const searchUrl = 'https://rutor.info/search/0/0/0/' + query;
+        
+        // Пробуем открыть WebView (если есть в сборке)
+        if (window.Lampa && Lampa.WebView) {
+            Lampa.WebView.open(searchUrl, {
+                title: '🔍 ' + card.title,
+                onBack: function() {
+                    if (Lampa.Router) Lampa.Router.back();
+                }
+            });
+        } else {
+            // Фоллбэк: показать ссылку
+            if (window.Lampa && Lampa.Modal) {
+                Lampa.Modal.info({
+                    title: '🔗 Торрент-поиск',
+                    text: 'Откройте в браузере:\n' + searchUrl,
+                    onConfirm: function() {}
+                });
+            }
+        }
     }
 
-    window.RutorPro = RutorPro;
+    // ====== РЕГИСТРАЦИЯ ИСТОЧНИКА ======
+    function registerSource() {
+        // Проверяем, что Lampa загружен
+        if (!window.Lampa || !Lampa.Api || !Lampa.Api.sources) {
+            setTimeout(registerSource, 500);
+            return;
+        }
+        
+        // Регистрируем источник
+        Lampa.Api.sources[SOURCE_ID] = RutorSource;
+        
+        // Добавляем обработчик выбора карточки
+        if (Lampa.Listener) {
+            Lampa.Listener.follow('card', function(e) {
+                if (e.type === 'select' && e.card && e.card.source === SOURCE_ID) {
+                    onCardSelect(e.card);
+                    e.abort(); // Отменяем стандартное действие
+                }
+            });
+        }
+        
+        // Обновляем список источников в настройках
+        if (Lampa.Params && Lampa.Params.select) {
+            const sources = {
+                'tmdb': 'TMDB',
+                'cub': 'CUB',
+                'pub': 'PUB',
+                [SOURCE_ID]: SOURCE_NAME
+            };
+            Lampa.Params.select('source', sources, 'tmdb');
+        }
+        
+        console.log('[RutorPro] ✅ Source registered');
+    }
+
+    // ====== ЗАПУСК ======
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', registerSource);
+    } else {
+        registerSource();
+    }
+
 })();
