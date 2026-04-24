@@ -1,13 +1,11 @@
 (function () {
   'use strict';
 
-  // === КОНФИГУРАЦИЯ ===
   var DEFAULT_SOURCE_NAME = 'Rutor Pro';
   var BASE_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
   var ICON = '🔥';
   var DEFAULT_MIN_PROGRESS = 90;
 
-  // ✅ БЕЗОПАСНЫЕ обёртки для Storage (работают до полной загрузки Lampa)
   function getStorage(key, fallback) {
     try { return window.Lampa && Lampa.Storage ? Lampa.Storage.get(key, fallback) : fallback; }
     catch (e) { return fallback; }
@@ -16,7 +14,6 @@
     try { if (window.Lampa && Lampa.Storage) Lampa.Storage.set(key, value); } catch (e) {}
   }
 
-  // Глобальные переменные (заполняются в init())
   var SOURCE_NAME = DEFAULT_SOURCE_NAME;
   var MIN_PROGRESS = DEFAULT_MIN_PROGRESS;
 
@@ -41,7 +38,6 @@
     };
   }
 
-  // === ФИЛЬТРАЦИЯ ПРОСМОТРЕННЫХ ===
   function filterWatchedContent(results) {
     try {
       var hideWatched = getStorage('rutor_hide_watched', false);
@@ -74,7 +70,6 @@
     } catch (e) { return results; }
   }
 
-  // === НОРМАЛИЗАЦИЯ ДАННЫХ ОТ WORKER'А ===
   function normalizeData(json, categoryUrl) {
     function toTmdbPath(v) {
       if (!v || typeof v !== 'string') return '';
@@ -131,7 +126,6 @@
     };
   }
 
-  // === API SERVICE ===
   function RutorApiService() {
     var self = this;
     try { self.network = new Lampa.Reguest(); }
@@ -172,7 +166,6 @@
       }, onError);
     };
 
-    // ✅ ИСПРАВЛЕННЫЙ self.full (защита от undefined)
     self.full = function (params, onSuccess, onError) {
       params = params || {};
       var card = params.card || params.item || params.data || {};
@@ -213,11 +206,9 @@
       } catch (e) { console.error('TMDB call error:', e); onSuccess(tmdbParams.card); }
     };
 
-    // ✅ ИСПРАВЛЕННЫЙ self.category (отображает 6 категорий вместо пустого листа)
     self.category = function (params, onSuccess, onError) {
       params = params || {};
       
-      // Ловим все варианты "первого входа": '', '__categories__', undefined, null
       if (!params.url || params.url === '' || params.url === '__categories__') {
         var cats = [];
         var catVis = getCategoryVisibility();
@@ -227,13 +218,13 @@
             cats.push({
               id: 'rutor_cat_' + key,
               title: catVis[key].title,
-              name: catVis[key].title,              // ✅ Обязательно для Lampa UI
-              original_title: catVis[key].title,    // ✅ Обязательно для Lampa UI
+              name: catVis[key].title,
+              original_title: catVis[key].title,
               url: CATEGORIES[key],
               source: SOURCE_NAME,
-              type: 'movie',                        // ✅ Используем стандартный шаблон карточки
+              type: 'movie',
               media_type: 'movie',
-              poster_path: '',                      // ✅ Пусто → Lampa подставит иконку по умолчанию
+              poster_path: '',
               backdrop_path: '',
               overview: '',
               vote_average: 0,
@@ -250,7 +241,6 @@
         return;
       }
 
-      // Загрузка списка контента
       self.list(params, function (data) {
         onSuccess({
           results: data.results, page: data.page,
@@ -261,7 +251,6 @@
     };
   }
 
-  // === РЕГИСТРАЦИЯ ИСТОЧНИКА ===
   var rutorApi = new RutorApiService();
   try {
     if (Lampa.Api && Lampa.Api.sources) {
@@ -272,7 +261,6 @@
     }
   } catch (e) { console.warn('Source registration failed:', e); }
 
-  // === НАСТРОЙКИ ===
   function registerSettings() {
     try {
       if (!Lampa.SettingsApi) return;
@@ -287,7 +275,8 @@
           try {
             var active = Lampa.Activity.active();
             if (active && active.source === DEFAULT_SOURCE_NAME && active.activity_line) {
-              active.activity_line.listener.send({ type: 'append',  active.activity_line.card_data, line: active.activity_line });
+              // ✅ ИСПРАВЛЕНО: добавлен ключ data:
+              active.activity_line.listener.send({ type: 'append', data: active.activity_line.card_data, line: active.activity_line });
             }
           } catch (e) {}
         }
@@ -305,8 +294,11 @@
         component: 'rutor_settings',
         param: { name: 'rutor_source_name', type: 'input', default: DEFAULT_SOURCE_NAME },
         field: { name: 'Название в меню', description: 'Как отображать источник' },
-        onChange: function (v) { setStorage('rutor_source_name', v); SOURCE_NAME = v || DEFAULT_SOURCE_NAME;
-          try { var item = document.querySelector('[data-rutor-source] .menu__text'); if (item) item.textContent = SOURCE_NAME; } catch(e){} }
+        onChange: function (v) { 
+          setStorage('rutor_source_name', v); 
+          SOURCE_NAME = v || DEFAULT_SOURCE_NAME;
+          try { var item = document.querySelector('[data-rutor-source] .menu__text'); if (item) item.textContent = SOURCE_NAME; } catch(e){} 
+        }
       });
 
       CATEGORY_SETTINGS_ORDER.forEach(function (key) {
@@ -319,7 +311,6 @@
     } catch (e) { console.warn('Settings registration failed:', e); }
   }
 
-  // === МЕНЮ ===
   function addMenuItem() {
     try {
       var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
@@ -340,7 +331,6 @@
     } catch (e) { return false; }
   }
 
-  // === БЕСКОНЕЧНЫЙ СКРОЛЛ ===
   function registerLineListener() {
     try {
       if (!Lampa.Listener) return;
@@ -373,7 +363,6 @@
     } catch (e) { console.warn('Line listener failed:', e); }
   }
 
-  // === ИНИЦИАЛИЗАЦИЯ ===
   function init() {
     try {
       SOURCE_NAME = getStorage('rutor_source_name', DEFAULT_SOURCE_NAME);
@@ -390,7 +379,6 @@
     console.log('✅ ' + SOURCE_NAME + ': initialized safely');
   }
 
-  // === ЗАПУСК ===
   if (window.Lampa && window.appready) { init(); }
   else if (window.Lampa) { Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); }); }
   else {
