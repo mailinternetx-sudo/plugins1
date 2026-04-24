@@ -62,15 +62,13 @@
       if (thrown) return false;
       if (!watched) return true;
 
-      // Для фильмов: проверяем прогресс
+      // Для фильмов: проверяем прогресс просмотра
       if (mediaType === 'movie') {
         var hash = Lampa.Utils.hash(String(item.id));
         var view = Lampa.Storage.cache('file_view', 300, {})[hash];
         if (view && view.percent && view.percent >= MIN_PROGRESS) return false;
         return true;
       }
-
-      // Для сериалов: упрощённая проверка (можно расширить)
       return true;
     });
   }
@@ -92,7 +90,7 @@
     }
 
     var results = (json.results || []).map(function (item) {
-      // Пропускаем элементы-категории (у них есть поле url и нет id-числа)
+      // Элементы-категории (у них есть url и нет числового id)
       if (item.url && !/^\d+$/.test(String(item.id))) {
         return {
           id: item.id,
@@ -113,15 +111,28 @@
       }
 
       // Нормальные фильмы/сериалы
+      var posterPath = toTmdbPath(item.poster_path);
+      var backdropPath = toTmdbPath(item.backdrop_path);
+      
+      // Если путь не валидный, пробуем сконвертировать из полного URL
+      if (!posterPath && item.poster_path && /^https?:\/\//i.test(item.poster_path)) {
+        posterPath = '/t/p/w500' + item.poster_path.replace(/^https?:\/\/[^\/]+\/t\/p\/w\d+\//, '');
+      }
+      if (!backdropPath && item.backdrop_path && /^https?:\/\//i.test(item.backdrop_path)) {
+        backdropPath = '/t/p/original' + item.backdrop_path.replace(/^https?:\/\/[^\/]+\/t\/p\/original\//, '');
+      }
+
       return {
         id: item.id,
         title: item.title || item.name || 'Без названия',
         name: item.name || item.title || 'Без названия',
         original_title: item.original_title || '',
-        poster_path: toTmdbPath(item.poster_path) || (item.poster_path ? '/t/p/w500' + item.poster_path.replace(/^https?:\/\/[^\/]+/,'') : ''),
-        backdrop_path: toTmdbPath(item.backdrop_path) || (item.backdrop_path ? '/t/p/original' + item.backdrop_path.replace(/^https?:\/\/[^\/]+/,'') : ''),
+        original_name: item.original_name || '',
+        poster_path: posterPath || '',
+        backdrop_path: backdropPath || '',
         overview: item.overview || '',
         vote_average: parseFloat(item.vote_average) || 0,
+        rating: { kp: parseFloat(item.vote_average) || 0, tmdb: parseFloat(item.vote_average) || 0 },
         type: item.type === 'tv' ? 'tv' : 'movie',
         media_type: item.type === 'tv' ? 'tv' : 'movie',
         original_language: item.original_language || 'en',
@@ -131,11 +142,12 @@
         promo_title: item.promo_title || item.title || '',
         promo: item.promo || item.overview || '',
         source: SOURCE_NAME,
-        number_of_seasons: item.number_of_seasons
+        number_of_seasons: item.number_of_seasons,
+        status: item.status || ''
       };
     });
 
-    // Фильтруем просмотренные только для списков фильмов (не для меню категорий)
+    // Фильтруем просмотренные только для списков контента (не для меню категорий)
     if (categoryUrl && categoryUrl !== '__categories__') {
       results = filterWatchedContent(results);
     }
@@ -178,10 +190,12 @@
       }, onError);
     };
 
+    // ✅ ИСПРАВЛЕННЫЙ self.full — ключевое исправление для undefined ID
     self.full = function (params, onSuccess, onError) {
+      params = params || {};
       var card = params.card || {};
       
-      // Если это категория — не стучимся в TMDB
+      // 1. Если это категория — навигация, не TMDB
       if (card.url && card.type === 'category') {
         Lampa.Activity.push({
           title: card.title,
@@ -193,18 +207,29 @@
         onSuccess(card);
         return;
       }
-
-      // Если ID не TMDB (например, начинается с букв) — отдаём как есть
-      var isTmdbId = /^\d+$/.test(String(card.id));
+      
+      // 2. Если ID не числовой (не TMDB) — отдаём как есть
+      var idStr = String(card.id || '');
+      var isTmdbId = /^\d+$/.test(idStr);
+      
       if (!isTmdbId) {
         onSuccess(card);
         return;
       }
-
-      // Стандартный путь через TMDB
-      var method = (card.type === 'tv' || card.number_of_seasons || card.first_air_date) ? 'tv' : 'movie';
+      
+      // 3. Определяем тип: tv или movie
+      var method = 'movie';
+      if (card.type === 'tv' || card.media_type === 'tv' || card.number_of_seasons || card.first_air_date) {
+        method = 'tv';
+      }
+      
+      // 4. КРИТИЧНО: добавляем method в params (как в NUMParser)
+      params.method = method;
+      
       if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
-        Lampa.Api.sources.tmdb.full({ card: card, method: method }, onSuccess, function() {
+        Lampa.Api.sources.tmdb.full(params, onSuccess, function() {
+          // Fallback: если TMDB упал, отдаём исходную карточку
+          console.warn('TMDB full failed, returning cached card');
           onSuccess(card);
         });
       } else {
@@ -224,15 +249,18 @@
               id: 'rutor_' + key,
               title: CATEGORY_VISIBILITY[key].title,
               name: CATEGORY_VISIBILITY[key].title,
+              original_title: CATEGORY_VISIBILITY[key].title,
               url: CATEGORIES[key],
               source: SOURCE_NAME,
               type: 'category',
+              media_type: 'category',
               poster_path: '/img/img_broken.svg',
               backdrop_path: '',
               overview: 'Нажмите для перехода в раздел',
               promo: CATEGORY_VISIBILITY[key].title,
               promo_title: CATEGORY_VISIBILITY[key].title,
               vote_average: 0,
+              rating: { kp: 0, tmdb: 0 },
               original_language: 'en',
               year: 2024
             });
@@ -371,7 +399,7 @@
     return true;
   }
 
-  // === LISTENER ДЛЯ БЕСКОНЕЧНОГО СКРОЛЛА ===
+  // === LISTENER ДЛЯ БЕСКОНЕЧНОГО СКРОЛЛА (как в NUMParser) ===
   function registerLineListener() {
     Lampa.Listener.follow('line', function (event) {
       if (event.type !== 'append') return;
