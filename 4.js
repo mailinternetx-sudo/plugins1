@@ -1,1 +1,202 @@
+(function () {
+  'use strict';
 
+  // === КОНФИГУРАЦИЯ ===
+  var SOURCE_NAME = 'Rutor Pro';
+  // ВАЖНО: Слэш на конце обязателен!
+  var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
+  var ICON = '🔥';
+
+  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА (для фильмов/сериалов) ===
+  function normalizeItem(item) {
+    if (!item) return null;
+    var dateStr = item.release_date || item.first_air_date || '';
+    var year = dateStr ? parseInt(dateStr.substring(0, 4), 10) : (item.year || 0);
+    
+    return {
+      id: parseInt(item.id) || 0,
+      title: item.title || item.name || 'Без названия',
+      name: item.name || item.title || 'Без названия',
+      original_title: item.original_title || '',
+      poster_path: item.poster_path || '',
+      backdrop_path: item.backdrop_path || '',
+      overview: item.overview || '',
+      vote_average: parseFloat(item.vote_average) || 0,
+      type: item.type || 'movie',
+      media_type: item.media_type || item.type || 'movie',
+      original_language: item.original_language || 'en',
+      release_date: item.release_date || '',
+      first_air_date: item.first_air_date || '',
+      year: year,
+      number_of_seasons: item.number_of_seasons || 0,
+      promo_title: item.promo_title || item.title || '',
+      promo: item.promo || item.overview || '',
+      source: SOURCE_NAME
+    };
+  }
+
+  // === HTTP ЗАПРОС ===
+  function xhrGet(url, onSuccess, onError) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState === 4) {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            onSuccess(JSON.parse(xhr.responseText));
+          } catch (e) {
+            onError(new Error('JSON parse error'));
+          }
+        } else {
+          onError(new Error('HTTP ' + xhr.status));
+        }
+      }
+    };
+    xhr.onerror = function () {
+      onError(new Error('Network error'));
+    };
+    xhr.send();
+  }
+
+  // === API SERVICE ===
+  function Api() {
+    var self = this;
+
+    self.category = function (params, onSuccess, onError) {
+      params = params || {};
+
+      // 🔹 1. ЗАПРОС СПИСКА КАТЕГОРИЙ
+      if (!params.url || params.url === '__categories__') {
+        
+        // 1. ИЗМЕНЕНИЕ: Явно указываем /categories
+        var catUrl = PROXY_URL + '/categories';
+        
+        xhrGet(catUrl, function (data) {
+          if (!data || !Array.isArray(data.results)) {
+            onError(new Error('Не удалось загрузить категории'));
+            return;
+          }
+
+          data.results.forEach(function (cat) {
+            cat.source = SOURCE_NAME;
+            
+            // 2. ИЗМЕНЕНИЕ: Плагин дописывает полный путь к URL категории
+            // Было "top24", станет "https://my-proxy.../top24"
+            cat.url = PROXY_URL + cat.url; 
+          });
+
+          onSuccess(data);
+
+        }, function (err) {
+          console.error('Rutor Pro categories error:', err);
+          onError(err);
+        });
+
+        return;
+      }
+
+      // 🔹 2. ЗАПРОС ФИЛЬМОВ/СЕРИАЛОВ ИЗ КАТЕГОРИИ
+      var page = params.page || 1;
+      
+      // Так как в шаге 1 мы уже сделали cat.url полным (с https://...),
+      // здесь мы просто приклеиваем к нему параметр страницы
+      var requestUrl = params.url + '?page=' + page; 
+
+      xhrGet(requestUrl, function (data) {
+        if (!data || !Array.isArray(data.results)) {
+          onError(new Error('Неверная структура ответа от сервера'));
+          return;
+        }
+
+        var items = data.results
+          .map(normalizeItem)
+          .filter(function (item) {
+            return item && item.id;
+          });
+
+        onSuccess({
+          results: items,
+          page: data.page || page,
+          total_pages: data.total_pages || 1,
+          total_results: data.total_results || items.length,
+          source: SOURCE_NAME,
+          url: params.url // Передаем полный URL дальше для пагинации (листания страниц)
+        });
+
+      }, function (err) {
+        console.error('Rutor Pro items error:', err);
+        onError(err);
+      });
+    };
+
+    // Полная информация о карточке
+    self.full = function (params, onSuccess, onError) {
+      var card = params.card || {};
+      var method = (card.type === 'tv' || card.number_of_seasons) ? 'tv' : 'movie';
+      
+      if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
+        Lampa.Api.sources.tmdb.full({
+          card: card,
+          method: method
+        }, onSuccess, function () {
+          onSuccess(card); 
+        });
+      } else {
+        onSuccess(card);
+      }
+    };
+  }
+
+  // === РЕГИСТРАЦИЯ ИСТОЧНИКА В LAMPA ===
+  if (!Lampa.Api.sources[SOURCE_NAME]) {
+    Lampa.Api.sources[SOURCE_NAME] = new Api();
+  }
+
+  // === ДОБАВЛЕНИЕ КНОПКИ В ГЛАВНОЕ МЕНЮ ===
+  function addMenuItem() {
+    var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
+    if (!menu) return false;
+    if (menu.querySelector('[data-rutor-source]')) return true;
+
+    var li = document.createElement('li');
+    li.className = 'menu__item selector';
+    li.setAttribute('data-rutor-source', '1');
+    li.innerHTML = '<div class="menu__ico">' + ICON + '</div><div class="menu__text">' + SOURCE_NAME + '</div>';
+    
+    li.addEventListener('hover:enter', function () {
+      Lampa.Activity.push({
+        title: SOURCE_NAME,
+        component: 'category',
+        source: SOURCE_NAME,
+        url: '__categories__' 
+      });
+    });
+    
+    menu.appendChild(li);
+    console.log('✅ ' + SOURCE_NAME + ': menu item added');
+    return true;
+  }
+
+  // === ИНИЦИАЛИЗАЦИЯ ПЛАГИНА ===
+  function init() {
+    if (!addMenuItem()) {
+      var obs = new MutationObserver(function () {
+        if (addMenuItem()) obs.disconnect();
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      setTimeout(function () {
+        obs.disconnect();
+      }, 10000);
+    }
+    console.log('✅ ' + SOURCE_NAME + ': plugin initialized');
+  }
+
+  // Запуск инициализации
+  if (window.appready) {
+    init();
+  } else {
+    Lampa.Listener.follow('app', function (e) {
+      if (e.type === 'ready') init();
+    });
+  }
+})();
