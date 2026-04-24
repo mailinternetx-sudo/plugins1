@@ -1,20 +1,17 @@
 (function () {
   'use strict';
 
-  // === CONFIG ===
+  // === КОНФИГУРАЦИЯ ===
   var SOURCE_NAME = 'Rutor Pro';
-  var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev';
+  var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; // Убедитесь, что тут слэш на конце
   var ICON = '🔥';
 
-  // === NORMALIZE ===
+  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА (для фильмов/сериалов) ===
   function normalizeItem(item) {
     if (!item) return null;
-
     var dateStr = item.release_date || item.first_air_date || '';
     var year = dateStr ? parseInt(dateStr.substring(0, 4), 10) : 0;
-
-    var type = item.media_type || item.type || 'movie';
-
+    
     return {
       id: item.id || 0,
       title: item.title || item.name || 'Без названия',
@@ -24,26 +21,23 @@
       backdrop_path: item.backdrop_path || '',
       overview: item.overview || '',
       vote_average: parseFloat(item.vote_average) || 0,
-
-      type: type,
-      media_type: type,
-
+      type: item.type === 'tv' ? 'tv' : 'movie',
+      media_type: item.type === 'tv' ? 'tv' : 'movie',
       original_language: item.original_language || 'en',
       release_date: item.release_date || '',
       first_air_date: item.first_air_date || '',
       year: year,
-
-      promo_title: item.title || '',
-      promo: item.overview || '',
+      number_of_seasons: item.number_of_seasons || 0,
+      promo_title: item.promo_title || item.title || '',
+      promo: item.promo || item.overview || '',
       source: SOURCE_NAME
     };
   }
 
-  // === HTTP ===
+  // === HTTP ЗАПРОС ===
   function xhrGet(url, onSuccess, onError) {
     var xhr = new XMLHttpRequest();
     xhr.open('GET', url, true);
-
     xhr.onreadystatechange = function () {
       if (xhr.readyState === 4) {
         if (xhr.status >= 200 && xhr.status < 300) {
@@ -57,160 +51,158 @@
         }
       }
     };
-
     xhr.onerror = function () {
       onError(new Error('Network error'));
     };
-
     xhr.send();
   }
 
-  // === API ===
+  // === API SERVICE ===
   function Api() {
     var self = this;
 
     self.category = function (params, onSuccess, onError) {
       params = params || {};
 
-      // 🔥 1. ПОЛУЧЕНИЕ КАТЕГОРИЙ С WORKER
+      // 🔹 1. ЗАПРОС СПИСКА КАТЕГОРИЙ С WORKER
       if (!params.url || params.url === '__categories__') {
-        xhrGet(PROXY_URL + '/',
-          function (data) {
-            if (!data || !Array.isArray(data.results)) {
-              onError(new Error('Invalid categories'));
-              return;
-            }
-
-            var cats = data.results.map(function (cat) {
-              return {
-                id: cat.id,
-                title: cat.title,
-                name: cat.title,
-                url: cat.url, // 🔥 ВАЖНО: теперь берем из worker
-
-                // 👇 чтобы Lampa показала
-                poster_path: '/img/img_broken.svg',
-                backdrop_path: '',
-                type: 'movie',
-                media_type: 'movie',
-                vote_average: 0,
-                overview: 'Открыть категорию',
-                source: SOURCE_NAME
-              };
-            });
-
-            onSuccess({
-              results: cats,
-              page: 1,
-              total_pages: 1,
-              total_results: cats.length,
-              source: SOURCE_NAME
-            });
-          },
-          onError
-        );
-        return;
-      }
-
-      // 🔥 2. ЗАГРУЗКА КОНТЕНТА КАТЕГОРИИ
-      var page = params.page || 1;
-
-      var url = PROXY_URL + params.url;
-
-      xhrGet(url,
-        function (data) {
-
+        
+        var catUrl = PROXY_URL + 'categories';
+        
+        xhrGet(catUrl, function (data) {
           if (!data || !Array.isArray(data.results)) {
-            onError(new Error('Invalid response'));
+            onError(new Error('Не удалось загрузить категории'));
             return;
           }
 
-          var items = data.results
-            .map(normalizeItem)
-            .filter(function (x) { return x && x.id; });
+          var categories = data.results;
+
+          // ⚠️ КРИТИЧНО ДЛЯ LAMPA UI: 
+          // Lampa скрывает карточки без постера или с нестандартным type.
+          // Приводим их к формату "фильм", чтобы они отрисовались как папки.
+          categories.forEach(function (cat) {
+            cat.poster_path = '/img/img_broken.svg'; // валидный путь-заглушка
+            cat.backdrop_path = '';
+            cat.type = 'movie';
+            cat.media_type = 'movie';
+            cat.vote_average = 0;
+            cat.original_title = cat.title;
+            cat.source = SOURCE_NAME;
+            cat.overview = 'Нажмите для перехода в раздел';
+            cat.promo = cat.title;
+          });
 
           onSuccess({
-            results: items,
-            page: data.page || page,
-            total_pages: data.total_pages || 1,
-            total_results: data.total_results || items.length,
-            source: SOURCE_NAME,
-            url: params.url
+            results: categories,
+            page: 1,
+            total_pages: 1,
+            total_results: categories.length,
+            source: SOURCE_NAME
           });
-        },
-        function (err) {
-          console.error('Rutor error:', err);
+
+        }, function (err) {
+          console.error('Rutor Pro categories error:', err);
           onError(err);
+        });
+
+        return;
+      }
+
+      // 🔹 2. ЗАПРОС ФИЛЬМОВ/СЕРИАЛОВ ИЗ КОНКРЕТНОЙ КАТЕГОРИИ
+      var page = params.page || 1;
+      // Worker отдает фильмы по URL вида /movies, /top24 и т.д.
+      var requestUrl = PROXY_URL + params.url + '?page=' + page; 
+
+      xhrGet(requestUrl, function (data) {
+        if (!data || !Array.isArray(data.results)) {
+          onError(new Error('Неверная структура ответа от сервера'));
+          return;
         }
-      );
+
+        var items = data.results
+          .map(normalizeItem)
+          .filter(function (item) {
+            return item && item.id;
+          });
+
+        onSuccess({
+          results: items,
+          page: data.page || page,
+          total_pages: data.total_pages || 1,
+          total_results: data.total_results || items.length,
+          source: SOURCE_NAME,
+          url: params.url // Возвращаем URL, чтобы Lampa понимала, куда листать дальше
+        });
+
+      }, function (err) {
+        console.error('Rutor Pro items error:', err);
+        onError(err);
+      });
     };
 
-    // === FULL ===
+    // Полная информация о карточке (подтягиваем описание и Seasons у TMDB)
     self.full = function (params, onSuccess, onError) {
       var card = params.card || {};
-      var method = (card.media_type === 'tv') ? 'tv' : 'movie';
-
+      var method = (card.type === 'tv' || card.number_of_seasons) ? 'tv' : 'movie';
+      
       if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
-        Lampa.Api.sources.tmdb.full(
-          { card: card, method: method },
-          onSuccess,
-          function () { onSuccess(card); }
-        );
+        Lampa.Api.sources.tmdb.full({
+          card: card,
+          method: method
+        }, onSuccess, function () {
+          onSuccess(card); // Если TMDB не ответил, отдаем то, что есть
+        });
       } else {
         onSuccess(card);
       }
     };
   }
 
-  // === REGISTER ===
+  // === РЕГИСТРАЦИЯ ИСТОЧНИКА ===
   if (!Lampa.Api.sources[SOURCE_NAME]) {
     Lampa.Api.sources[SOURCE_NAME] = new Api();
   }
 
-  // === MENU ===
+  // === ДОБАВЛЕНИЕ В МЕНЮ ===
   function addMenuItem() {
-    var menu = document.querySelector('.menu .menu__list') ||
-               document.querySelector('.menu__list');
-
+    var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
     if (!menu) return false;
     if (menu.querySelector('[data-rutor-source]')) return true;
 
     var li = document.createElement('li');
     li.className = 'menu__item selector';
     li.setAttribute('data-rutor-source', '1');
-
-    li.innerHTML =
-      '<div class="menu__ico">' + ICON + '</div>' +
-      '<div class="menu__text">' + SOURCE_NAME + '</div>';
-
+    li.innerHTML = '<div class="menu__ico">' + ICON + '</div><div class="menu__text">' + SOURCE_NAME + '</div>';
+    
     li.addEventListener('hover:enter', function () {
       Lampa.Activity.push({
         title: SOURCE_NAME,
         component: 'category',
         source: SOURCE_NAME,
-        url: '__categories__'
+        url: '__categories__' // Маркер, по которому плагин поймет, что нужно стучаться в /categories
       });
     });
-
+    
     menu.appendChild(li);
+    console.log('✅ ' + SOURCE_NAME + ': menu item added');
     return true;
   }
 
-  // === INIT ===
+  // === ИНИЦИАЛИЗАЦИЯ ===
   function init() {
     if (!addMenuItem()) {
       var obs = new MutationObserver(function () {
         if (addMenuItem()) obs.disconnect();
       });
-
       obs.observe(document.body, { childList: true, subtree: true });
-
       setTimeout(function () {
         obs.disconnect();
       }, 10000);
     }
+    console.log('✅ ' + SOURCE_NAME + ': plugin initialized');
   }
 
+  // Запуск
   if (window.appready) {
     init();
   } else {
@@ -218,5 +210,4 @@
       if (e.type === 'ready') init();
     });
   }
-
 })();
