@@ -44,6 +44,8 @@
 
     function Api(){
         this.category = function(params, onSuccess, onError){
+            
+            // 1. ГЛАВНОЕ МЕНЮ (список категорий)
             if(!params.url){
                 var lines = [];
                 for(var i=0; i<CATEGORIES.length; i++){
@@ -53,24 +55,21 @@
                         url: CATEGORIES[i].path
                     });
                 }
-                onSuccess({ results: lines });
+                // Отдаем ЧИСТЫЙ МАССИВ
+                onSuccess(lines);
                 return;
             }
             
+            // 2. СПИСОК ФИЛЬМОВ внутри категории
             var page = params.page || 1;
             xhrGet(PROXY + params.url + '?page=' + page,
                 function(data){
+                    // Отдаем ЧИСТЫЙ МАССИВ фильмов
                     var results = (data.results || []).map(normalizeItem);
-                    onSuccess({
-                        results: results,
-                        page: data.page || page,
-                        total_pages: data.total_pages || 1,
-                        more: (data.page || page) < (data.total_pages || 1),
-                        url: params.url
-                    });
+                    onSuccess(results);
                 },
                 function(err) {
-                    console.error('Rutor Pro: Ошибка запроса категории', err);
+                    console.error('Rutor Pro: Ошибка запроса', err);
                     onError(err);
                 }
             );
