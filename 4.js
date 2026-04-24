@@ -6,7 +6,7 @@
   var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
   var ICON = '🔥';
 
-  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА ===
+  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА (для фильмов/сериалов) ===
   function normalizeItem(item) {
     if (!item) return null;
     
@@ -41,11 +41,8 @@
     xhr.onreadystatechange = function () {
       if (xhr.readyState === 4) {
         if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            onSuccess(JSON.parse(xhr.responseText));
-          } catch (e) {
-            onError(new Error('JSON parse error'));
-          }
+          try { onSuccess(JSON.parse(xhr.responseText)); } 
+          catch (e) { onError(new Error('JSON parse error')); }
         } else {
           onError(new Error('HTTP ' + xhr.status));
         }
@@ -62,18 +59,33 @@
     self.category = function (params, onSuccess, onError) {
       params = params || {};
 
-      // 🔹 1. СПИСОК КАТЕГОРИЙ (если url не указан)
-      if (!params.url) {
+      // 🔹 1. СПИСОК КАТЕГОРИЙ (меню плагина)
+      // Используем специальный маркер, чтобы Lampa не путала с запросом фильмов
+      if (!params.url || params.url === '__categories__') {
         var categories = [
-          { id: 'rutor_top24', title: '🔥 Топ за 24 часа', url: 'lampac_top24', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
-          { id: 'rutor_movies', title: '🎬 Зарубежные фильмы', url: 'lampac_movies', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
-          { id: 'rutor_movies_ru', title: '🇷🇺 Наши фильмы', url: 'lampac_movies_ru', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
-          { id: 'rutor_tv', title: '📺 Зарубежные сериалы', url: 'lampac_tv_shows', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
-          { id: 'rutor_tv_ru', title: '🇷🇺 Наши сериалы', url: 'lampac_tv_shows_ru', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' },
-          { id: 'rutor_televizor', title: '📡 ТВ-передачи', url: 'lampac_televizor', source: SOURCE_NAME, type: 'category', poster_path: '', backdrop_path: '' }
+          { id: 'rutor_top24', title: '🔥 Топ за 24 часа', url: 'lampac_top24' },
+          { id: 'rutor_movies', title: '🎬 Зарубежные фильмы', url: 'lampac_movies' },
+          { id: 'rutor_movies_ru', title: '🇷🇺 Наши фильмы', url: 'lampac_movies_ru' },
+          { id: 'rutor_tv', title: '📺 Зарубежные сериалы', url: 'lampac_tv_shows' },
+          { id: 'rutor_tv_ru', title: '🇷🇺 Наши сериалы', url: 'lampac_tv_shows_ru' },
+          { id: 'rutor_televizor', title: '📡 ТВ-передачи', url: 'lampac_televizor' }
         ];
 
-        // ✅ КРИТИЧНО: всегда возвращаем объект с полем results
+        // ⚠️ КРИТИЧНО ДЛЯ LAMPA UI:
+        // Lampa скрывает карточки без постера или с нестандартным type.
+        // Временно приводим их к формату "фильм", чтобы они точно отрисовались.
+        categories.forEach(function (cat) {
+          cat.poster_path = '/img/img_broken.svg'; // валидный путь-заглушка
+          cat.backdrop_path = '';
+          cat.type = 'movie';
+          cat.media_type = 'movie';
+          cat.vote_average = 0;
+          cat.original_title = cat.title;
+          cat.source = SOURCE_NAME;
+          cat.overview = 'Нажмите для перехода в раздел';
+          cat.promo = cat.title;
+        });
+
         onSuccess({
           results: categories,
           page: 1,
@@ -99,7 +111,6 @@
             .map(normalizeItem)
             .filter(function (item) { return item && item.id; });
 
-          // ✅ Единый формат ответа
           onSuccess({
             results: items,
             page: data.page || page,
@@ -123,7 +134,7 @@
       
       if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
         Lampa.Api.sources.tmdb.full({ card: card, method: method }, onSuccess, function() {
-          onSuccess(card); // fallback если TMDB недоступен
+          onSuccess(card);
         });
       } else {
         onSuccess(card);
@@ -153,7 +164,7 @@
         title: SOURCE_NAME,
         component: 'category',
         source: SOURCE_NAME,
-        url: '' // пустой url -> покажет список категорий
+        url: '__categories__' // маркер для показа меню категорий
       });
     });
 
