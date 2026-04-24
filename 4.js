@@ -25,7 +25,6 @@
     }
 
     function normalizeItem(item) {
-        // Достаем год из дат, если они есть
         var dateStr = item.release_date || item.first_air_date || '';
         var year = dateStr ? parseInt(dateStr.substring(0, 4)) : 0;
 
@@ -33,11 +32,8 @@
             id: item.id || 0,
             title: item.title || item.name || 'Без названия',
             original_title: item.original_title || '',
-            // Worker теперь отдает СРАЗУ полные URL для постеров (и TMDB, и Кинопоиск)
             poster: item.poster_path || '',
-            // Фон для карточки (важно для детальной страницы)
             backdrop: item.backdrop_path || '',
-            // Исправлена проверка типа (было item.type, стало item.media_type)
             media_type: (item.media_type === 'tv') ? 'tv' : 'movie',
             overview: item.overview || '',
             year: year,
@@ -49,7 +45,6 @@
     function Api(){
         this.category = function(params, onSuccess, onError){
             if(!params.url){
-                // Главный экран: возвращаем МАССИВ категорий
                 var lines = [];
                 for(var i=0; i<CATEGORIES.length; i++){
                     lines.push({
@@ -65,7 +60,6 @@
                 return;
             }
             
-            // Запрос к worker-у
             var page = params.page || 1;
             xhrGet(PROXY + params.url + '?page=' + page,
                 function(data){
@@ -83,13 +77,6 @@
         };
 
         this.full = function(params, onSuccess, onError){
-            // Хитрость для детальной страницы:
-            // Для английских фильмов мы стянули инфу через TMDB - здесь всё ок, запрос пойдет.
-            // Для РУССКИХ фильмов ID из Кинопоиска. Если попытаться запросить их в TMDB - будет ошибка.
-            // Поэтому мы пробуем вызвать TMDB, а если он падает - просто вызываем onError.
-            // Lampa умная: если full выдает ошибку, она подхватывает данные из normalizeItem 
-            // (постер, описание, год) и строит красивую страницу сама!
-            
             if(Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
                 Lampa.Api.sources.tmdb.full(params, onSuccess, function(e) {
                     onError('Skip TMDB, use cached data');
@@ -100,20 +87,45 @@
         };
     }
 
-    // Регистрация источника
+    // Регистрация API
     if(!Lampa.Api.sources[SOURCE]) Lampa.Api.sources[SOURCE] = new Api();
-    
-    // Добавление в главное меню
-    var menu = document.querySelector('.menu .menu__list');
-    if(menu && !document.querySelector('[data-rutor-pro-array]')){
-        var li = document.createElement('li');
-        li.className = 'menu__item selector';
-        li.setAttribute('data-rutor-pro-array','1');
-        li.innerHTML = '<div class="menu__ico">🔥</div><div class="menu__text">'+SOURCE+'</div>';
-        li.addEventListener('hover:enter', function(){
-            Lampa.Activity.push({ component:'category', source:SOURCE, title:SOURCE });
-        });
-        menu.appendChild(li);
-        console.log('Rutor Pro (массив) загружен и обновлен');
+
+    // --- НОВАЯ НАДЕЖНАЯ ФУНКЦИЯ ДОБАВЛЕНИЯ В МЕНЮ ---
+    function initMenu() {
+        // Ищем меню (пробуем два варианта селектора, так как в разных версиях Lampa они могут отличаться)
+        var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
+        
+        if (menu && !document.querySelector('[data-rutor-pro-array]')) {
+            var li = document.createElement('li');
+            li.className = 'menu__item selector';
+            li.setAttribute('data-rutor-pro-array','1');
+            li.innerHTML = '<div class="menu__ico">🔥</div><div class="menu__text">'+SOURCE+'</div>';
+            li.addEventListener('hover:enter', function(){
+                Lampa.Activity.push({ component:'category', source:SOURCE, title:SOURCE });
+            });
+            menu.appendChild(li);
+            console.log('Rutor Pro: Кнопка успешно добавлена в меню!');
+            return true; // Возвращаем true, если удалось добавить
+        }
+        return false; // Меню еще нет
     }
+
+    // Пытаемся добавить сразу (на случай, если скрипт загружается поздно)
+    if (!initMenu()) {
+        // Если меню не найдено, запускаем наблюдатель за изменениями DOM
+        var observer = new MutationObserver(function(mutations, obs) {
+            if (initMenu()) {
+                obs.disconnect(); // Как только кнопка добавлена, прекращаем наблюдать
+            }
+        });
+        
+        // Начинаем следить за появлением элементов в body
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        // Страховка: если что-то пойдет не так, прекращаем искать через 10 секунд, чтобы не тормозить браузер
+        setTimeout(function() {
+            observer.disconnect();
+        }, 10000);
+    }
+
 })();
