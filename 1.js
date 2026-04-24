@@ -1,207 +1,380 @@
-(function () {
-'use strict';
+/**
+ * 🎬 Rutor Pro Plugin for Lampa
+ * Интеграция с Cloudflare Worker
+ * Позиция в меню: 1
+ */
 
-const SOURCE = 'Rutor Pro';
-const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
-const TMDB_API_KEY = "f348b4586d1791a40d99edd92164cb86";
+(function() {
+    'use strict';
 
-// ---------------- EXTRACT LOGIC ----------------
-function extractSmart(q){
-  if(!q) return '';
-
-  // 🔥 если есть /
-  if(q.includes('/')){
-    let part = q.split('/')[1] || '';
-    part = part.split('[')[0];
-    return part.trim();
-  }
-
-  // 🔥 если нет / → вернуть как есть (но без мусора)
-  return q.split('[')[0].trim();
-}
-
-// ---------------- REMOVE YEAR ----------------
-function removeYear(q){
-  if(!q) return '';
-  return q.replace(/\(\d{4}\)/,'').trim();
-}
-
-// ---------------- TYPE DETECT ----------------
-function isTV(item){
-  return (
-    /\[.*?\]/.test(item.search || '') ||
-    item.is_tv === true
-  );
-}
-
-// ---------------- TMDB SEARCH ----------------
-async function tmdbSearch(query, type){
-
-  let url = type === 'tv'
-    ? `https://api.themoviedb.org/3/search/tv?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`
-    : `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=ru-RU`;
-
-  try{
-    let res = await fetch(url).then(r=>r.json());
-    return res.results || [];
-  }catch(e){
-    return [];
-  }
-}
-
-// ---------------- SMART SEARCH ----------------
-async function search(item){
-
-  let queries = [
-    removeYear(extractSmart(item.search)), // 🔥 умный разбор
-    item.alt,
-    item.title
-  ].filter(Boolean);
-
-  let tv = isTV(item);
-  let year = item.year;
-
-  for(let q of queries){
-
-    let results = [];
-
-    if(tv){
-      results = await tmdbSearch(q, 'tv');
-      if(!results.length) results = await tmdbSearch(q, 'movie');
-    }else{
-      results = await tmdbSearch(q, 'movie');
-      if(!results.length) results = await tmdbSearch(q, 'tv');
-    }
-
-    if(!results.length) continue;
-
-    let best = results.find(r=>{
-      let y = (r.release_date || r.first_air_date || '').slice(0,4);
-      return !year || y === year;
-    }) || results[0];
-
-    if(!best) continue;
-
-    return {
-      id: best.id,
-      title: best.title || best.name,
-      name: best.title || best.name,
-      original_title: best.original_title || best.original_name,
-      poster_path: best.poster_path,
-      backdrop_path: best.backdrop_path,
-      overview: best.overview,
-      vote_average: best.vote_average,
-      media_type: best.media_type || (best.first_air_date ? 'tv':'movie'),
-      release_date: best.release_date,
-      first_air_date: best.first_air_date,
-      source: 'tmdb'
+    // ================= CONFIG =================
+    const CONFIG = {
+        workerUrl: 'https://my-proxy-worker.mail-internetx.workers.dev',
+        pluginId: 'rutor_pro',
+        menuPosition: 1,        // Позиция кнопки в главном меню (1 = первая)
+        menuTitle: '🔥 Rutor Pro',
+        menuSubtitle: 'Торренты с постерами',
+        cacheTTL: 5 * 60 * 1000 // 5 минут кэш для ответов
     };
-  }
 
-  return null;
-}
-
-// ---------------- API ----------------
-function Api(){
-
-  this.category = async function (params, onSuccess, onError){
-    try{
-
-      let data = await fetch(PROXY + '?v=' + Date.now()).then(r=>r.json());
-
-      let parts = [];
-
-      for(let cat in data){
-
-        let line = {
-          title: cat,
-          results: [],
-          type: 'line'
-        };
-
-        parts.push(line);
-
-        let results = await Promise.all(
-          (data[cat] || []).slice(0,40).map(search)
-        );
-
-        let seen = new Set();
-
-        line.results = results
-          .filter(Boolean)
-          .filter(r=>{
-            if(seen.has(r.id)) return false;
-            seen.add(r.id);
-            return true;
-          });
-      }
-
-      onSuccess(parts);
-
-    }catch(e){
-      console.error('Rutor error:', e);
-      onError(e);
+    // ================= CACHE =================
+    const cache = new Map();
+    
+    function cachedFetch(url, key) {
+        const cached = cache.get(key);
+        if (cached && Date.now() - cached.ts < CONFIG.cacheTTL) {
+            return Promise.resolve(cached.data);
+        }
+        return fetch(url)
+            .then(res => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.json();
+            })
+            .then(data => {
+                cache.set(key, { data, ts: Date.now() });
+                // Очистка старого кэша
+                if (cache.size > 50) {
+                    const oldest = [...cache.entries()].sort((a,b) => a[1].ts - b[1].ts)[0];
+                    cache.delete(oldest[0]);
+                }
+                return data;
+            });
     }
-  };
 
-  this.full = function(params, onSuccess, onError){
-    Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
-  };
-}
+    // ================= PLUGIN CORE =================
+    const RutorPro = {
+        
+        // Инициализация плагина
+        init: function() {
+            this.registerSource();
+            this.bindRouter();
+            console.log('[RutorPro] ✅ Plugin loaded');
+        },
 
-// ---------------- UI BUTTON ----------------
-function addButton(){
+        // Регистрация источника в меню Lampa
+        registerSource: function() {
+            if (typeof Lampa.Source === 'undefined') {
+                console.warn('[RutorPro] ⚠️ Lampa.Source not available');
+                return;
+            }
 
-  let tryAdd = () => {
+            Lampa.Source.add({
+                id: CONFIG.pluginId,
+                title: CONFIG.menuTitle,
+                subtitle: CONFIG.menuSubtitle,
+                icon: '🗂️',
+                position: CONFIG.menuPosition,
+                // При нажатии — показываем категории
+                onSelect: () => this.showCategories(),
+                // Долгое нажатие — инфо о плагине
+                onLongPress: () => {
+                    Lampa.Modal.info({
+                        title: CONFIG.menuTitle,
+                        text: [
+                            'Плагин для просмотра торрентов с постерами',
+                            '',
+                            '📡 Источник: rutor.info',
+                            '🎬 Метаданные: TMDB / KinoPoisk',
+                            '⚡ Прокси: Cloudflare Workers',
+                            '',
+                            'Нажмите ОК для входа в раздел'
+                        ].join('\n'),
+                        onConfirm: () => {}
+                    });
+                }
+            });
+        },
 
-    let menu = document.querySelector('.menu .menu__list');
-    if(!menu) return setTimeout(tryAdd, 500);
+        // Обработчик маршрутов плагина
+        bindRouter: function() {
+            Lampa.Router.add(CONFIG.pluginId + '/categories', () => this.showCategories());
+            Lampa.Router.add(CONFIG.pluginId + '/category/:url', (params) => this.showCategory(params.url));
+            Lampa.Router.add(CONFIG.pluginId + '/item/:id', (params) => this.showItemDetails(params.id));
+        },
 
-    if(document.querySelector('[data-rutor-pro]')) return;
+        // 📁 Показать категории
+        showCategories: function() {
+            Lampa.Loading.show();
 
-    let li = document.createElement('li');
-    li.className = 'menu__item selector';
-    li.setAttribute('data-rutor-pro', '1');
+            cachedFetch(CONFIG.workerUrl + '/categories', 'categories')
+                .then(data => {
+                    Lampa.Loading.hide();
+                    
+                    if (data.error) throw new Error(data.message || 'Ошибка API');
 
-    li.innerHTML = `
-      <div class="menu__ico">🔥</div>
-      <div class="menu__text">${SOURCE}</div>
-    `;
+                    const items = (data.results || []).map(cat => ({
+                        title: cat.title,
+                        subtitle: 'Раздел торрентов',
+                        poster: cat.poster_path,
+                        backdrop: cat.backdrop_path,
+                        id: cat.id,
+                        url: cat.url,
+                        type: 'folder',
+                        source: CONFIG.pluginId,
+                        
+                        onEnter: () => {
+                            Lampa.Router.open(CONFIG.pluginId + '/category/' + cat.url);
+                        },
+                        
+                        onMore: () => {
+                            Lampa.Modal.open({
+                                title: cat.title,
+                                items: [
+                                    {
+                                        title: '🔄 Обновить',
+                                        onSelect: () => {
+                                            cache.delete('categories');
+                                            this.showCategories();
+                                        }
+                                    },
+                                    {
+                                        title: 'ℹ️ О разделе',
+                                        onSelect: () => {
+                                            Lampa.Modal.info({
+                                                title: cat.title,
+                                                text: 'Раздел содержит торрент-раздачи с постерами и рейтингами из баз данных.'
+                                            });
+                                        }
+                                    }
+                                ]
+                            });
+                        }
+                    }));
 
-    li.addEventListener('hover:enter', () => {
-      Lampa.Activity.push({
-        component: 'category',
-        source: SOURCE,
-        title: SOURCE
-      });
-    });
+                    Lampa.Screen.show({
+                        title: CONFIG.menuTitle,
+                        subtitle: 'Выберите категорию',
+                        items: items,
+                        type: 'grid',
+                        backdrop: '',
+                        onBack: () => Lampa.Router.back(),
+                        onEmpty: () => ({
+                            title: '😕 Пусто',
+                            text: 'В этом разделе пока нет контента'
+                        })
+                    });
+                })
+                .catch(err => {
+                    Lampa.Loading.hide();
+                    this.showError('Не удалось загрузить категории', err.message);
+                    console.error('[RutorPro]', err);
+                });
+        },
 
-    menu.appendChild(li);
-  };
+        // 🎬 Показать контент категории
+        showCategory: function(categoryUrl) {
+            Lampa.Loading.show();
 
-  tryAdd();
-}
+            cachedFetch(CONFIG.workerUrl + '/' + categoryUrl, 'cat:' + categoryUrl)
+                .then(data => {
+                    Lampa.Loading.hide();
+                    
+                    if (data.error) throw new Error(data.message || 'Ошибка загрузки контента');
 
-// ---------------- INIT ----------------
-function start(){
+                    const items = (data.results || []).map(item => ({
+                        title: item.title,
+                        subtitle: this.formatSubtitle(item),
+                        poster: item.poster_path || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjQ1MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjMmMyYzJjIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJzYW5zLXNlcmlmIiBmb250LXNpemU9IjQwcHgiIGZpbGw9IiM4ODgiIHRleHQtYW5jaG9yPSJtaWRkbGUiPuKckuKcqDwvdGV4dD48L3N2Zz4=',
+                        backdrop: item.backdrop_path,
+                        id: item.id,
+                        type: item.type || 'movie',
+                        media_type: item.media_type || item.type || 'movie',
+                        overview: item.overview || '',
+                        year: item.year,
+                        rating: item.vote_average,
+                        source: item.source || CONFIG.pluginId,
+                        
+                        // Клик — детали / поиск торрента
+                        onEnter: () => {
+                            this.handleItemSelect(item);
+                        },
+                        
+                        // Долгое нажатие — меню действий
+                        onMore: () => {
+                            this.showItemMenu(item);
+                        }
+                    }));
 
-  let api = new Api();
+                    Lampa.Screen.show({
+                        title: data.results?.[0]?.source || 'Контент',
+                        subtitle: categoryUrl,
+                        items: items,
+                        type: 'media', // Сетка постеров
+                        backdrop: items[0]?.backdrop,
+                        onBack: () => Lampa.Router.back(),
+                        onLoadMore: () => {
+                            // Пагинация: текущий воркер отдаёт 1 страницу
+                            return false;
+                        },
+                        onEmpty: () => ({
+                            title: '🔍 Ничего не найдено',
+                            text: 'Попробуйте другую категорию'
+                        })
+                    });
+                })
+                .catch(err => {
+                    Lampa.Loading.hide();
+                    this.showError('Ошибка загрузки контента', err.message);
+                    console.error('[RutorPro]', err);
+                });
+        },
 
-  Lampa.Api.sources.rutorpro = api;
+        // 🎯 Обработка выбора элемента
+        handleItemSelect: function(item) {
+            // Вариант 1: Показать детали
+            // Lampa.Router.open(CONFIG.pluginId + '/item/' + item.id);
+            
+            // Вариант 2: Сразу искать торрент (рекомендуется)
+            this.searchTorrent(item.title + (item.year ? ' ' + item.year : ''));
+        },
 
-  Object.defineProperty(Lampa.Api.sources, SOURCE, {
-    get: () => api
-  });
+        // 🔍 Поиск торрента по названию
+        searchTorrent: function(query) {
+            Lampa.Loading.show();
+            
+            // Здесь можно интегрировать:
+            // 1. Открытие поиска в торрент-плеере (TorLook, Jacked, etc.)
+            // 2. Парсинг страницы с rutor.info
+            // 3. Вызов внешнего приложения
+            
+            // Пример: открытие веб-поиска Rutor
+            const searchUrl = 'https://rutor.info/search/0/0/0/' + encodeURIComponent(query);
+            
+            Lampa.Loading.hide();
+            
+            // Если в Lampa есть Webview:
+            if (Lampa.WebView) {
+                Lampa.WebView.open(searchUrl, {
+                    title: '🔍 Поиск: ' + query,
+                    onBack: () => Lampa.Router.back()
+                });
+            } else {
+                // Фоллбэк: показать уведомление
+                Lampa.Modal.info({
+                    title: '🔗 Торрент-поиск',
+                    text: 'Откройте в браузере:\n' + searchUrl,
+                    buttons: [
+                        {
+                            title: '📋 Копировать ссылку',
+                            onSelect: () => {
+                                if (navigator.clipboard) {
+                                    navigator.clipboard.writeText(searchUrl);
+                                    Lampa.Notice.show('Ссылка скопирована!', 2000);
+                                }
+                            }
+                        },
+                        {
+                            title: '✅ Понятно',
+                            onSelect: () => {}
+                        }
+                    ]
+                });
+            }
+        },
 
-  addButton();
-}
+        // 📋 Меню действий для элемента
+        showItemMenu: function(item) {
+            Lampa.Modal.open({
+                title: item.title,
+                items: [
+                    {
+                        title: '🔍 Найти торрент',
+                        icon: '🔗',
+                        onSelect: () => this.searchTorrent(item.title + (item.year ? ' ' + item.year : ''))
+                    },
+                    {
+                        title: 'ℹ️ Описание',
+                        icon: '📝',
+                        onSelect: () => {
+                            Lampa.Modal.info({
+                                title: item.title,
+                                text: item.overview || 'Описание отсутствует',
+                                backdrop: item.backdrop
+                            });
+                        }
+                    },
+                    {
+                        title: '⭐ Рейтинг: ' + (item.vote_average || 'N/A'),
+                        icon: '🌟',
+                        disabled: true
+                    },
+                    {
+                        title: '📅 ' + (item.year || 'Год неизвестен'),
+                        icon: '🗓️',
+                        disabled: true
+                    },
+                    {
+                        title: '↩️ Назад',
+                        icon: '⬅️',
+                        onSelect: () => {}
+                    }
+                ]
+            });
+        },
 
-// ---------------- START ----------------
-if(window.appready) start();
-else{
-  Lampa.Listener.follow('app', e=>{
-    if(e.type === 'ready') start();
-  });
-}
+        // ℹ️ Детали элемента (заглушка)
+        showItemDetails: function(itemId) {
+            Lampa.Modal.info({
+                title: 'ℹ️ Детали',
+                text: 'Страница деталей в разработке.\n\nID: ' + itemId
+            });
+        },
+
+        // 📝 Форматирование подписи карточки
+        formatSubtitle: function(item) {
+            const parts = [];
+            if (item.year) parts.push(item.year);
+            if (item.vote_average > 0) parts.push('⭐ ' + item.vote_average.toFixed(1));
+            if (item.number_of_seasons > 0) parts.push(item.number_of_seasons + ' сез.');
+            return parts.join(' • ') || 'Без данных';
+        },
+
+        // ❌ Показать ошибку
+        showError: function(title, message) {
+            Lampa.Modal.open({
+                title: '❌ ' + title,
+                items: [
+                    {
+                        title: '🔄 Повторить',
+                        onSelect: () => Lampa.Router.reload()
+                    },
+                    {
+                        title: '📋 Скопировать ошибку',
+                        onSelect: () => {
+                            if (navigator.clipboard) {
+                                navigator.clipboard.writeText(message);
+                                Lampa.Notice.show('Текст ошибки скопирован', 2000);
+                            }
+                        }
+                    },
+                    {
+                        title: '✅ Закрыть',
+                        onSelect: () => Lampa.Router.back()
+                    }
+                ]
+            });
+            Lampa.Notice.show(title + ': ' + message, 4000);
+        }
+    };
+
+    // ================= AUTO-INIT =================
+    function initPlugin() {
+        if (typeof Lampa === 'undefined') {
+            console.warn('[RutorPro] ⏳ Lampa not ready, retrying...');
+            setTimeout(initPlugin, 500);
+            return;
+        }
+        RutorPro.init();
+    }
+
+    // Запуск
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPlugin);
+    } else {
+        initPlugin();
+    }
+
+    // Глобальный доступ (опционально)
+    window.RutorPro = RutorPro;
 
 })();
