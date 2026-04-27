@@ -2,7 +2,7 @@
     'use strict';
 
     // ВАЖНО: Укажи здесь свой URL воркера (обязательно с / в конце)
-    const WORKER_URL = 'https://your-worker-name.workers.dev/'; 
+    const WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
     const SOURCE_ID = 'rutor_pro_v2';
     const SOURCE_NAME = 'Rutor Pro';
 
