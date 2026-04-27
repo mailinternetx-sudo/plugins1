@@ -11,7 +11,7 @@
             const controller = new AbortController();
             setTimeout(() => controller.abort(), 10000);
 
-            const res = await fetch(url, {
+            const res = await fetch(url, { 
                 signal: controller.signal,
                 headers: { 'Accept': 'application/json' }
             });
@@ -20,64 +20,35 @@
 
             let data = await res.json();
 
-            if (Array.isArray(data)) data = { results: data };
-            if (!data || !Array.isArray(data.results)) data = { results: [] };
+            if (Array.isArray(data)) return { results: data };
+            if (data && Array.isArray(data.results)) return data;
+            return { results: [] };
 
-            return data;
         } catch (e) {
-            console.error(`[Rutor Pro] Fetch error ${path}:`, e.message);
+            console.error(`[Rutor Pro] Fetch error:`, e.message);
             return { results: [] };
         }
     }
 
     function Api() {
         this.category = async function (params, onSuccess) {
-            console.log(`[Rutor Pro] category() вызвана, url="${params.url || ''}"`);
+            console.log(`[Rutor Pro] category вызвана | url = "${params.url || ''}"`);
 
-            const isMenu = !params.url || params.url === '' || params.url === 'categories';
+            const path = (params.url || '').trim() || 'categories';
 
-            if (isMenu) {
-                // === СПИСОК КАТЕГОРИЙ ===
-                const data = await fetchCategory('categories');
+            const data = await fetchCategory(path);
 
-                const results = (data.results || []).map((cat, index) => ({
-                    id: index + 1000,                    // обязательно число
-                    title: cat.title || cat.name || 'Категория',
-                    url: cat.url || cat.path || '',
-                    type: 'line',
-                    card_type: 'line',                   // добавлено
-                    source: SOURCE,
-                    page: 1,
-                    more: true,
-                    action: 'category'                   // добавлено
-                }));
+            // Самый простой и надёжный формат для Lampa
+            const response = {
+                results: Array.isArray(data.results) ? data.results : [],
+                page: 1,
+                total_pages: 1,
+                more: false,
+                source: SOURCE
+            };
 
-                const response = {
-                    results: results,
-                    page: 1,
-                    total_pages: 1,
-                    more: false,
-                    source: SOURCE
-                };
-
-                console.log(`[Rutor Pro] Передаём меню с ${results.length} категориями`);
-                onSuccess(response);
-
-            } else {
-                // === КОНКРЕТНАЯ КАТЕГОРИЯ ===
-                const data = await fetchCategory(params.url);
-
-                const response = {
-                    results: Array.isArray(data.results) ? data.results : [],
-                    page: 1,
-                    total_pages: 1,
-                    more: false,
-                    source: SOURCE,
-                    url: params.url
-                };
-
-                onSuccess(response);
-            }
+            console.log(`[Rutor Pro] onSuccess вызван с ${response.results.length} элементами`);
+            onSuccess(response);
         };
 
         this.full = function (params, onSuccess, onError) {
@@ -107,7 +78,7 @@
 
             menu.appendChild(li);
             console.log('[Rutor Pro] Кнопка добавлена');
-        }, 1200);
+        }, 1500);
     }
 
     function start() {
