@@ -1,136 +1,148 @@
 (function () {
     'use strict';
 
-    function RutorPlugin() {
-        const WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+    // === КОНФИГУРАЦИЯ ===
+    var SOURCE_NAME = 'Rutor Pro';
+    var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
+    var ICON = '<svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg>';
 
-        // Описания категорий
-        const categories = [
-            { id: 'top24', title: 'Rutor: Топ 24ч' },
-            { id: 'movies', title: 'Rutor: Зарубежное кино' },
-            { id: 'movies_ru', title: 'Rutor: Наше кино' },
-            { id: 'tv_shows', title: 'Rutor: Зарубежные сериалы' },
-            { id: 'tv_shows_ru', title: 'Rutor: Наши сериалы' },
-            { id: 'televizor', title: 'Rutor: ТВ Передачи' }
-        ];
+    // Список категорий, которые ваш воркер умеет обрабатывать
+    var CATEGORIES = [
+        { title: 'Топ торренты за 24 часа', url: 'top24' },
+        { title: 'Зарубежные фильмы', url: 'movies' },
+        { title: 'Наши фильмы', url: 'movies_ru' },
+        { title: 'Зарубежные сериалы', url: 'tv_shows' },
+        { title: 'Наши сериалы', url: 'tv_shows_ru' },
+        { title: 'Телевизор', url: 'televizor' }
+    ];
 
-        // 1. Компонент отображения списка
-        Lampa.Component.add('rutor_plugin', function (object) {
-            var network = new Lampa.Reguest();
-            var scroll = new Lampa.Scroll({ mask: true, over: true });
-            var items = [];
-            var html = $('<div class="category-full"></div>');
+    /**
+     * Сервис запросов к вашему воркеру
+     */
+    function RutorApiService() {
+        var self = this;
+        self.network = new Lampa.Reguest();
 
-            this.create = function () {
-                var _this = this;
-                this.activity.loader(true);
-                
-                // Запрос к вашему воркеру
-                network.silent(WORKER_URL + object.id, function (data) {
-                    if (data && data.results && data.results.length > 0) {
-                        _this.build(data.results);
-                    } else {
-                        _this.empty();
-                    }
-                    _this.activity.loader(false);
-                }, function () {
-                    _this.empty();
-                    _this.activity.loader(false);
-                });
-
-                return this.render();
-            };
-
-            this.build = function (data) {
-                var _this = this;
-                data.forEach(function (item) {
-                    // Подготовка путей, если воркер прислал только хвосты
-                    if (item.poster_path && !item.poster_path.includes('http')) {
-                        item.poster_path = 'https://image.tmdb.org/t/p/w500' + item.poster_path;
-                    }
-                    if (item.backdrop_path && !item.backdrop_path.includes('http')) {
-                        item.backdrop_path = 'https://image.tmdb.org/t/p/original' + item.backdrop_path;
-                    }
-
-                    var card = Lampa.Template.get('card', item);
-                    
-                    card.on('hover:focus', function () {
-                        Lampa.Background.change(item.backdrop_path);
+        // Базовый загрузчик
+        self.fetch = function (url, onComplete, onError) {
+            self.network.silent(url, function (json) {
+                if (json && json.results) {
+                    var processed = json.results.map(function(item) {
+                        // Очистка и проксирование картинок для WebOS
+                        if (item.poster_path) {
+                            var img = item.poster_path.indexOf('http') === 0 ? item.poster_path : 'https://image.tmdb.org/t/p/w300' + item.poster_path;
+                            item.poster_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(img) + '&w=300';
+                        }
+                        if (item.backdrop_path) {
+                            var bg = item.backdrop_path.indexOf('http') === 0 ? item.backdrop_path : 'https://image.tmdb.org/t/p/original' + item.backdrop_path;
+                            item.backdrop_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(bg) + '&w=1000';
+                        }
+                        item.source = 'Rutor Pro';
+                        return item;
                     });
-                    
-                    card.on('hover:enter', function () {
-                        Lampa.Activity.push({
-                            url: '',
-                            title: 'Карточка',
-                            component: 'full',
-                            id: item.id,
-                            method: item.type == 'tv' ? 'tv' : 'movie',
-                            card: item,
-                            source: 'tmdb'
-                        });
-                    });
+                    onComplete(processed);
+                } else {
+                    onComplete([]);
+                }
+            }, function() {
+                onComplete([]);
+            });
+        };
 
-                    html.append(card);
-                    items.push(card);
-                });
-                scroll.append(html);
-            };
-
-            this.empty = function () {
-                html.append('<div class="empty">Ничего не найдено</div>');
-                scroll.append(html);
-            };
-
-            this.render = function () { return scroll.render(); };
-            this.back = function () { Lampa.Activity.backward(); };
-            this.destroy = function () {
-                network.clear();
-                scroll.destroy();
-                html.remove();
-                items = [];
-            };
-        });
-
-        // 2. Функция добавления кнопок
-        function addItems() {
-            if (window.rutor_plugin_installed) return; // Защита от дублей
-
-            categories.forEach(function (cat) {
-                var button = $(`<div class="menu__item selector" data-action="rutor">
-                    <svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-5-9h10v2H7z" fill="white"/></svg>
-                    <div class="menu__text">${cat.title}</div>
-                </div>`);
-
-                button.on('hover:enter', function () {
-                    Lampa.Activity.push({
-                        url: '',
-                        title: cat.title,
-                        component: 'rutor_plugin',
-                        id: cat.id,
-                        page: 1
-                    });
-                });
-
-                // Вставляем в меню перед пунктом "Настройки" или в конец
-                $('.menu .menu__list').append(button);
+        // Главная страница плагина (список рядов)
+        self.category = function (params, onSuccess, onError) {
+            // Формируем структуру рядов для Lampa
+            var rows = CATEGORIES.map(function(cat) {
+                return {
+                    title: cat.title,
+                    results: [],
+                    url: cat.url,
+                    source: 'Rutor Pro'
+                };
             });
 
-            window.rutor_plugin_installed = true;
-        }
+            // Запускаем последовательную подгрузку данных в каждый ряд
+            var partsData = rows.map(function(row) {
+                return function(callback) {
+                    self.fetch(WORKER_URL + row.url, function(items) {
+                        row.results = items;
+                        callback(row);
+                    }, callback);
+                };
+            });
 
-        // Ждем отрисовки интерфейса Lampa
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type == 'ready' || e.type == 'render') {
-                setTimeout(addItems, 100);
-            }
-        });
+            Lampa.Api.partNext(partsData, 3, onSuccess, onError);
+        };
+
+        // Метод для открытия "Показать все" в категории
+        self.list = function (params, onComplete, onError) {
+            self.fetch(WORKER_URL + params.url, function(items) {
+                onComplete({
+                    results: items,
+                    page: 1,
+                    total_pages: 1
+                });
+            }, onError);
+        };
+
+        // При клике на карточку открываем детали через TMDB (стандарт Lampa)
+        self.full = function (params, onSuccess, onError) {
+            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+        };
     }
 
-    // Запуск
-    if (window.appready) RutorPlugin();
-    else {
+    /**
+     * Регистрация и вставка в интерфейс
+     */
+    function init() {
+        if (window.rutor_pro_inited) return;
+        window.rutor_pro_inited = true;
+
+        // Регистрируем источник данных
+        Lampa.Api.sources['Rutor Pro'] = new RutorApiService();
+
+        // Функция вставки кнопки в левое меню
+        var addMenuItem = function () {
+            var menu = $('.menu__list');
+            if (!menu.length || $('.menu__item[data-action="rutor_pro"]').length) return;
+
+            var item = $('<li class="menu__item selector" data-action="rutor_pro">' +
+                '<div class="menu__ico">' + ICON + '</div>' +
+                '<div class="menu__text">' + SOURCE_NAME + '</div>' +
+            '</li>');
+
+            item.on('hover:enter', function () {
+                Lampa.Activity.push({
+                    title: SOURCE_NAME,
+                    component: 'category',
+                    source: 'Rutor Pro',
+                    method: 'category',
+                    url: ''
+                });
+            });
+
+            // Вставляем после пункта "Фильмы" или "Главная"
+            var target = menu.find('[data-action="movie"]').parent();
+            if (!target.length) target = menu.find('[data-action="main"]').parent();
+            
+            if (target.length) target.after(item);
+            else menu.append(item);
+        };
+
+        // Слушатель для WebOS (появление меню)
         Lampa.Listener.follow('app', function (e) {
-            if (e.type == 'ready') RutorPlugin();
+            if (e.type === 'ready' || e.type === 'render') addMenuItem();
         });
+
+        // Резервный таймер прокрутки DOM
+        var timer = setInterval(function() {
+            addMenuItem();
+            if ($('.menu__item[data-action="rutor_pro"]').length) clearInterval(timer);
+        }, 1000);
     }
+
+    // Запуск инициализации
+    if (window.appready) init();
+    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); });
+
 })();
