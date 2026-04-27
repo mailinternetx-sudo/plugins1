@@ -13,90 +13,88 @@
         { title: '📡 ТВ передачи',            path: 'televizor' }
     ];
 
-    // Надёжный запрос к Worker
     async function fetchCategory(path, page = 1) {
         try {
             const url = `${PROXY}${path}?page=${page}`;
 
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 15000);
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 секунд
 
             const response = await fetch(url, {
                 signal: controller.signal,
                 headers: { 'Accept': 'application/json' }
             });
 
-            clearTimeout(timeout);
+            clearTimeout(timeoutId);
 
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
 
             let data = await response.json();
 
-            // === КРИТИЧНЫЙ ФИКС ===
-            // Всегда возвращаем правильную структуру
+            // Жёсткая нормализация ответа
             if (Array.isArray(data)) {
                 data = { results: data };
             } else if (!data || typeof data !== 'object') {
                 data = { results: [] };
-            } else if (!data.results) {
+            } else if (!Array.isArray(data.results)) {
                 data.results = [];
             }
 
             // Приводим id к числу
-            if (Array.isArray(data.results)) {
-                data.results = data.results.map(item => {
-                    if (item && item.id !== undefined && item.id !== null) {
-                        item.id = typeof item.id === 'number' ? item.id : parseInt(item.id, 10) || 0;
-                    }
-                    return item;
-                });
-            }
+            data.results = data.results.map(item => {
+                if (item && item.id !== undefined) {
+                    item.id = typeof item.id === 'number' ? item.id : parseInt(item.id, 10) || 0;
+                }
+                return item;
+            });
 
             return data;
         } catch (e) {
-            console.error(`[Rutor Pro] Fetch failed "${path}":`, e.message);
-            return { results: [] };   // возвращаем пустой результат вместо краша
+            console.error(`[Rutor Pro] Fetch error "${path}":`, e.message);
+            return { results: [] }; // всегда возвращаем валидный объект
         }
     }
 
     function Api() {
         this.category = async function (params, onSuccess, onError) {
+            console.log(`[Rutor Pro] category вызвана с url: "${params.url || ''}"`);
+
             try {
                 const categoryPath = (params.url || params.category || '').trim();
 
                 let data;
 
                 if (!categoryPath || categoryPath === 'categories' || categoryPath === 'menu') {
+                    console.log('[Rutor Pro] Запрашиваем список категорий...');
                     data = await fetchCategory('categories');
                 } else {
+                    console.log(`[Rutor Pro] Запрашиваем категорию: ${categoryPath}`);
                     data = await fetchCategory(categoryPath);
                 }
 
-                // Финальная гарантия формата для Lampa
                 const response = {
                     results: Array.isArray(data.results) ? data.results : [],
-                    page: typeof data.page === 'number' ? data.page : 1,
-                    total_pages: typeof data.total_pages === 'number' ? data.total_pages : 1,
+                    page: 1,
+                    total_pages: 1,
                     more: false,
                     source: SOURCE,
                     url: categoryPath
                 };
 
+                console.log(`[Rutor Pro] onSuccess вызван с ${response.results.length} элементами`);
                 onSuccess(response);
 
             } catch (e) {
-                console.error('[Rutor Pro] Category error:', e);
-                const emptyResponse = { results: [], page: 1, total_pages: 1, more: false, source: SOURCE };
-                onSuccess(emptyResponse);   // важно: не падаем, а возвращаем пустой результат
+                console.error('[Rutor Pro] Critical error in category:', e);
+                // Важно: всегда вызываем onSuccess, даже при ошибке
+                onSuccess({ results: [], page: 1, total_pages: 1, more: false, source: SOURCE });
             }
         };
 
         this.full = function (params, onSuccess, onError) {
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
-        };
-
-        this.search = function (params, onSuccess, onError) {
-            Lampa.Api.sources.tmdb.search(params, onSuccess, onError);
         };
     }
 
@@ -105,8 +103,8 @@
         const tryAdd = () => {
             attempts++;
             const menu = document.querySelector('.menu__list') || document.querySelector('.menu .menu__list');
-            if (!menu && attempts < 12) {
-                setTimeout(tryAdd, 800);
+            if (!menu && attempts < 15) {
+                setTimeout(tryAdd, 700);
                 return;
             }
             if (document.querySelector('[data-rutor-pro]')) return;
@@ -126,15 +124,16 @@
             });
 
             if (menu) menu.appendChild(li);
+            console.log('[Rutor Pro] Кнопка добавлена в меню');
         };
 
-        setTimeout(tryAdd, 1000);
+        setTimeout(tryAdd, 800);
     }
 
     function start() {
         if (Lampa.Api.sources[SOURCE]) return;
         Lampa.Api.sources[SOURCE] = new Api();
-        console.log(`[${SOURCE}] Плагин успешно загружен`);
+        console.log(`[${SOURCE}] Плагин успешно инициализирован`);
         addButton();
     }
 
