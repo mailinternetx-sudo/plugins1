@@ -1,7 +1,7 @@
 (function () {
     'use strict';
     const SOURCE = 'Rutor Pro';
-    const PROXY = 'https://твой-воркер.workers.dev/'; // ЗАМЕНИТЬ НА СВОЙ
+    const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/'; // ЗАМЕНИТЬ НА СВОЙ
 
     function Api() {
         this.category = function (params, onSuccess) {
