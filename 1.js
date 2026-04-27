@@ -13,12 +13,12 @@
         { title: '📡 ТВ передачи',            path: 'televizor' }
     ];
 
-    async function fetchCategory(path, page = 1) {
+    async function fetchCategory(path) {
         try {
-            const url = `${PROXY}${path}?page=${page}`;
+            const url = `${PROXY}${path}?page=1`;
 
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 секунд
+            const timeoutId = setTimeout(() => controller.abort(), 10000);
 
             const response = await fetch(url, {
                 signal: controller.signal,
@@ -27,54 +27,50 @@
 
             clearTimeout(timeoutId);
 
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             let data = await response.json();
 
-            // Жёсткая нормализация ответа
+            // Максимально жёсткая нормализация
+            if (!data || typeof data !== 'object') {
+                data = { results: [] };
+            }
+
             if (Array.isArray(data)) {
                 data = { results: data };
-            } else if (!data || typeof data !== 'object') {
-                data = { results: [] };
-            } else if (!Array.isArray(data.results)) {
+            }
+
+            if (!Array.isArray(data.results)) {
                 data.results = [];
             }
 
-            // Приводим id к числу
+            // Приводим все id к числу
             data.results = data.results.map(item => {
-                if (item && item.id !== undefined) {
-                    item.id = typeof item.id === 'number' ? item.id : parseInt(item.id, 10) || 0;
+                if (item && item.id != null) {
+                    item.id = parseInt(item.id, 10) || 0;
                 }
-                return item;
+                return item || {};
             });
 
+            console.log(`[Rutor Pro] Загружено ${data.results.length} элементов для ${path}`);
             return data;
+
         } catch (e) {
-            console.error(`[Rutor Pro] Fetch error "${path}":`, e.message);
-            return { results: [] }; // всегда возвращаем валидный объект
+            console.error(`[Rutor Pro] Fetch error for ${path}:`, e.message);
+            return { results: [] };
         }
     }
 
     function Api() {
         this.category = async function (params, onSuccess, onError) {
-            console.log(`[Rutor Pro] category вызвана с url: "${params.url || ''}"`);
+            console.log(`[Rutor Pro] category() вызвана с url = "${params.url || ''}"`);
 
             try {
-                const categoryPath = (params.url || params.category || '').trim();
+                const categoryPath = (params.url || params.category || '').trim() || 'categories';
 
-                let data;
+                const data = await fetchCategory(categoryPath);
 
-                if (!categoryPath || categoryPath === 'categories' || categoryPath === 'menu') {
-                    console.log('[Rutor Pro] Запрашиваем список категорий...');
-                    data = await fetchCategory('categories');
-                } else {
-                    console.log(`[Rutor Pro] Запрашиваем категорию: ${categoryPath}`);
-                    data = await fetchCategory(categoryPath);
-                }
-
-                const response = {
+                const safeResponse = {
                     results: Array.isArray(data.results) ? data.results : [],
                     page: 1,
                     total_pages: 1,
@@ -83,13 +79,20 @@
                     url: categoryPath
                 };
 
-                console.log(`[Rutor Pro] onSuccess вызван с ${response.results.length} элементами`);
-                onSuccess(response);
+                console.log(`[Rutor Pro] Вызываем onSuccess с ${safeResponse.results.length} элементами`);
+                onSuccess(safeResponse);
 
             } catch (e) {
-                console.error('[Rutor Pro] Critical error in category:', e);
-                // Важно: всегда вызываем onSuccess, даже при ошибке
-                onSuccess({ results: [], page: 1, total_pages: 1, more: false, source: SOURCE });
+                console.error('[Rutor Pro] Critical category error:', e);
+                // Последняя линия обороны
+                onSuccess({
+                    results: [],
+                    page: 1,
+                    total_pages: 1,
+                    more: false,
+                    source: SOURCE,
+                    url: ''
+                });
             }
         };
 
@@ -103,8 +106,8 @@
         const tryAdd = () => {
             attempts++;
             const menu = document.querySelector('.menu__list') || document.querySelector('.menu .menu__list');
-            if (!menu && attempts < 15) {
-                setTimeout(tryAdd, 700);
+            if (!menu && attempts < 12) {
+                setTimeout(tryAdd, 800);
                 return;
             }
             if (document.querySelector('[data-rutor-pro]')) return;
@@ -124,16 +127,16 @@
             });
 
             if (menu) menu.appendChild(li);
-            console.log('[Rutor Pro] Кнопка добавлена в меню');
+            console.log('[Rutor Pro] Кнопка добавлена');
         };
 
-        setTimeout(tryAdd, 800);
+        setTimeout(tryAdd, 1000);
     }
 
     function start() {
         if (Lampa.Api.sources[SOURCE]) return;
         Lampa.Api.sources[SOURCE] = new Api();
-        console.log(`[${SOURCE}] Плагин успешно инициализирован`);
+        console.log(`[${SOURCE}] Плагин загружен`);
         addButton();
     }
 
