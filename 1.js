@@ -16,9 +16,9 @@
     async function fetchCategory(path, page = 1) {
         try {
             const url = `${PROXY}${path}?page=${page}`;
-            
+
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 12000);
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
 
             const response = await fetch(url, {
                 signal: controller.signal,
@@ -29,17 +29,19 @@
 
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-            const data = await response.json();
+            let data = await response.json();
 
-            // Важный фикс: гарантируем структуру { results: [...] }
-            if (data && !data.results && Array.isArray(data)) {
-                data.results = data;
+            // КРИТИЧНЫЙ ФИКС: всегда возвращаем объект { results: [...] }
+            if (Array.isArray(data)) {
+                data = { results: data };
+            } else if (data && !data.results) {
+                data.results = [];
             }
 
             // Приводим id к числу
             if (data.results && Array.isArray(data.results)) {
                 data.results = data.results.map(item => {
-                    if (item.id !== undefined) {
+                    if (item && item.id !== undefined) {
                         item.id = typeof item.id === 'number' ? item.id : parseInt(item.id, 10) || 0;
                     }
                     return item;
@@ -58,18 +60,19 @@
             try {
                 let categoryPath = (params.url || params.category || '').trim();
 
-                // Запрос списка категорий
+                let data;
+
                 if (!categoryPath || categoryPath === 'categories' || categoryPath === 'menu') {
-                    const data = await fetchCategory('categories');
-                    onSuccess(data);           // <-- Здесь должен быть объект { results: [...] }
-                    return;
+                    // Список категорий
+                    data = await fetchCategory('categories');
+                } else {
+                    // Конкретная категория (movies, top24 и т.д.)
+                    data = await fetchCategory(categoryPath);
                 }
 
-                // Запрос конкретной категории
-                const data = await fetchCategory(categoryPath);
-
+                // Финальная гарантия правильного формата
                 const response = {
-                    results: data.results || [],
+                    results: (data && data.results) ? data.results : [],
                     page: data.page || 1,
                     total_pages: data.total_pages || 1,
                     more: false,
@@ -82,7 +85,7 @@
             } catch (e) {
                 console.error('[Rutor Pro] Category error:', e);
                 if (onError) onError(e);
-                else Lampa.Noty.show('Rutor Pro: Ошибка загрузки', { timeout: 4000 });
+                else Lampa.Noty.show('Rutor Pro: Ошибка загрузки данных', { timeout: 5000 });
             }
         };
 
@@ -100,8 +103,8 @@
         const tryAdd = () => {
             attempts++;
             const menu = document.querySelector('.menu__list') || document.querySelector('.menu .menu__list');
-            if (!menu) {
-                if (attempts < 15) setTimeout(tryAdd, 700);
+            if (!menu && attempts < 15) {
+                setTimeout(tryAdd, 800);
                 return;
             }
             if (document.querySelector('[data-rutor-pro]')) return;
@@ -129,7 +132,7 @@
     function start() {
         if (Lampa.Api.sources[SOURCE]) return;
         Lampa.Api.sources[SOURCE] = new Api();
-        console.log(`[${SOURCE}] Плагин загружен`);
+        console.log(`[${SOURCE}] Плагин успешно загружен`);
         addButton();
     }
 
