@@ -4,78 +4,52 @@
     const SOURCE = 'Rutor Pro';
     const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    // Статический список категорий — самый надёжный вариант
     const CATEGORIES = [
-        { title: '🔥 Топ торренты за 24 часа', path: 'top24' },
-        { title: '🎬 Зарубежные фильмы',      path: 'movies' },
-        { title: '🇷🇺 Наши фильмы',           path: 'movies_ru' },
-        { title: '📺 Зарубежные сериалы',     path: 'tv_shows' },
-        { title: '🇷🇺 Русские сериалы',       path: 'tv_shows_ru' },
-        { title: '📡 ТВ передачи',            path: 'televizor' }
+        { title: '🔥 Топ за 24 часа', path: 'top24' },
+        { title: '🎬 Зарубежные фильмы', path: 'movies' },
+        { title: '🇷🇺 Наши фильмы', path: 'movies_ru' },
+        { title: '📺 Зарубежные сериалы', path: 'tv_shows' },
+        { title: '🇷🇺 Русские сериалы', path: 'tv_shows_ru' },
+        { title: '📡 ТВ передачи', path: 'televizor' }
     ];
 
-    async function fetchCategory(path) {
-        try {
-            const url = `${PROXY}${path}?page=1`;
-
-            const controller = new AbortController();
-            setTimeout(() => controller.abort(), 10000);
-
-            const res = await fetch(url, {
-                signal: controller.signal,
-                headers: { 'Accept': 'application/json' }
-            });
-
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-            let data = await res.json();
-
-            if (Array.isArray(data)) return { results: data };
-            if (data && Array.isArray(data.results)) return data;
-
-            return { results: [] };
-        } catch (e) {
-            console.error(`[Rutor Pro] Fetch error ${path}:`, e.message);
-            return { results: [] };
-        }
-    }
-
     function Api() {
-        this.category = async function (params, onSuccess) {
-            console.log(`[Rutor Pro] category() вызвана | url="${params.url || ''}"`);
+        this.category = function (params, onSuccess, onError) {
+            console.log(`[Rutor Pro] category() вызвана | url = "${params.url || ''}"`);
 
             const path = (params.url || '').trim();
 
-            if (!path || path === 'categories') {
-                // Показываем статическое меню — самый стабильный способ
+            if (!path) {
+                // Показываем меню — простой формат
                 const results = CATEGORIES.map(cat => ({
                     title: cat.title,
                     url: cat.path,
-                    type: 'line',
-                    source: SOURCE,
-                    page: 1,
-                    more: true
+                    source: SOURCE
                 }));
 
-                console.log(`[Rutor Pro] Показываем статическое меню (${results.length} категорий)`);
+                console.log(`[Rutor Pro] Показываем меню (${results.length} категорий)`);
                 onSuccess({ results: results });
                 return;
             }
 
-            // Для конкретных категорий запрашиваем с Worker
-            console.log(`[Rutor Pro] Загружаем категорию: ${path}`);
-            const data = await fetchCategory(path);
-
-            const response = {
-                results: Array.isArray(data.results) ? data.results : [],
-                page: 1,
-                total_pages: 1,
-                more: false,
-                source: SOURCE,
-                url: path
-            };
-
-            onSuccess(response);
+            // Для конкретных категорий — запрос к Worker
+            fetch(`${PROXY}${path}?page=1`)
+                .then(r => r.json())
+                .then(data => {
+                    const results = Array.isArray(data.results) ? data.results : [];
+                    console.log(`[Rutor Pro] Загружено ${results.length} тайтлов из ${path}`);
+                    onSuccess({
+                        results: results,
+                        page: 1,
+                        total_pages: 1,
+                        more: false,
+                        source: SOURCE
+                    });
+                })
+                .catch(err => {
+                    console.error('[Rutor Pro] Ошибка загрузки категории:', err);
+                    onSuccess({ results: [], source: SOURCE });
+                });
         };
 
         this.full = function (params, onSuccess, onError) {
@@ -104,8 +78,8 @@
             });
 
             menu.appendChild(li);
-            console.log('[Rutor Pro] Кнопка добавлена в меню');
-        }, 1200);
+            console.log('[Rutor Pro] Кнопка добавлена');
+        }, 1500);
     }
 
     function start() {
