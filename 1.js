@@ -14,42 +14,37 @@
     ];
 
     function Api() {
-        this.category = function (params, onSuccess, onError) {
-            console.log(`[Rutor Pro] category() вызвана | url = "${params.url || ''}"`);
-
+        this.category = async function (params, onSuccess) {
             const path = (params.url || '').trim();
 
             if (!path) {
-                // Показываем меню — простой формат
+                // Меню категорий
                 const results = CATEGORIES.map(cat => ({
                     title: cat.title,
                     url: cat.path,
                     source: SOURCE
                 }));
-
-                console.log(`[Rutor Pro] Показываем меню (${results.length} категорий)`);
                 onSuccess({ results: results });
                 return;
             }
 
-            // Для конкретных категорий — запрос к Worker
-            fetch(`${PROXY}${path}?page=1`)
-                .then(r => r.json())
-                .then(data => {
-                    const results = Array.isArray(data.results) ? data.results : [];
-                    console.log(`[Rutor Pro] Загружено ${results.length} тайтлов из ${path}`);
-                    onSuccess({
-                        results: results,
-                        page: 1,
-                        total_pages: 1,
-                        more: false,
-                        source: SOURCE
-                    });
-                })
-                .catch(err => {
-                    console.error('[Rutor Pro] Ошибка загрузки категории:', err);
-                    onSuccess({ results: [], source: SOURCE });
+            // Конкретная категория
+            try {
+                const res = await fetch(`${PROXY}${path}?page=1`);
+                const data = await res.json();
+
+                onSuccess({
+                    results: Array.isArray(data.results) ? data.results : [],
+                    page: 1,
+                    total_pages: 1,
+                    more: false,
+                    source: SOURCE,
+                    url: path
                 });
+            } catch (e) {
+                console.error('[Rutor Pro] Ошибка загрузки:', e);
+                onSuccess({ results: [], source: SOURCE });
+            }
         };
 
         this.full = function (params, onSuccess, onError) {
@@ -60,8 +55,7 @@
     function addButton() {
         setTimeout(() => {
             const menu = document.querySelector('.menu__list') || document.querySelector('.menu .menu__list');
-            if (!menu) return;
-            if (document.querySelector('[data-rutor-pro]')) return;
+            if (!menu || document.querySelector('[data-rutor-pro]')) return;
 
             const li = document.createElement('li');
             li.className = 'menu__item selector';
@@ -78,8 +72,7 @@
             });
 
             menu.appendChild(li);
-            console.log('[Rutor Pro] Кнопка добавлена');
-        }, 1500);
+        }, 1200);
     }
 
     function start() {
