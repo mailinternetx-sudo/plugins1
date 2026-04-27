@@ -2,12 +2,11 @@
     'use strict';
 
     var SOURCE_NAME = 'Rutor Pro';
-    // Убедитесь, что URL воркера правильный!
     var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
     var ICON = '<svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg>';
 
     var CATEGORIES = [
-        { title: 'Топ торренты за 24 часа', url: 'top24' },
+        { title: 'Топ 24 часа', url: 'top24' },
         { title: 'Зарубежные фильмы', url: 'movies' },
         { title: 'Наши фильмы', url: 'movies_ru' },
         { title: 'Зарубежные сериалы', url: 'tv_shows' },
@@ -23,39 +22,24 @@
             self.network.silent(url, function (json) {
                 if (json && json.results) {
                     var processed = json.results.map(function(item) {
-                        var proxyImage = function(path, size) {
+                        var proxy = function(path, w) {
                             if (!path) return '';
-                            var fullUrl = path;
-                            if (path.indexOf('http') !== 0) {
-                                fullUrl = 'https://image.tmdb.org/t/p/' + size + path;
-                            }
-                            return 'https://images.weserv.nl/?url=' + encodeURIComponent(fullUrl) + '&w=' + (size === 'w300' ? '300' : '1000');
+                            var full = path.indexOf('http') === 0 ? path : 'https://image.tmdb.org/t/p/w' + w + path;
+                            return 'https://images.weserv.nl/?url=' + encodeURIComponent(full) + '&w=' + w;
                         };
-
-                        item.poster_path = proxyImage(item.poster_path, 'w300');
-                        item.backdrop_path = proxyImage(item.backdrop_path, 'original');
-                        item.source = 'Rutor Pro';
+                        item.poster_path = proxy(item.poster_path, 300);
+                        item.backdrop_path = proxy(item.backdrop_path, 1000);
                         return item;
                     });
                     onComplete(processed);
-                } else {
-                    onComplete([]);
-                }
-            }, function() {
-                onComplete([]);
-            });
+                } else onComplete([]);
+            }, function() { onComplete([]); });
         };
 
         self.category = function (params, onSuccess, onError) {
             var rows = CATEGORIES.map(function(cat) {
-                return {
-                    title: cat.title,
-                    results: [],
-                    url: cat.url,
-                    source: 'Rutor Pro'
-                };
+                return { title: cat.title, results: [], url: cat.url, source: 'Rutor Pro' };
             });
-
             var partsData = rows.map(function(row) {
                 return function(callback) {
                     self.fetch(WORKER_URL + row.url, function(items) {
@@ -64,7 +48,6 @@
                     }, callback);
                 };
             });
-
             Lampa.Api.partNext(partsData, 3, onSuccess, onError);
         };
 
@@ -82,13 +65,10 @@
     function init() {
         if (window.rutor_pro_inited) return;
         window.rutor_pro_inited = true;
-
         Lampa.Api.sources['Rutor Pro'] = new RutorApiService();
 
         var addMenuItem = function () {
-            var menu = $('.menu__list');
-            if (!menu.length || $('.menu__item[data-action="rutor_pro"]').length) return;
-
+            if ($('.menu__item[data-action="rutor_pro"]').length) return;
             var item = $('<li class="menu__item selector" data-action="rutor_pro">' +
                 '<div class="menu__ico">' + ICON + '</div>' +
                 '<div class="menu__text">' + SOURCE_NAME + '</div>' +
@@ -96,32 +76,20 @@
 
             item.on('hover:enter', function () {
                 Lampa.Activity.push({
-                    title: SOURCE_NAME,
-                    component: 'category',
-                    source: 'Rutor Pro',
-                    method: 'category',
-                    url: ''
+                    title: SOURCE_NAME, component: 'category', source: 'Rutor Pro', method: 'category', url: ''
                 });
             });
 
-            var target = menu.find('[data-action="movie"]').parent();
-            if (!target.length) target = menu.find('[data-action="main"]').parent();
-            
+            var target = $('.menu__list [data-action="movie"]').parent();
             if (target.length) target.after(item);
-            else menu.append(item);
         };
 
         Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready' || e.type === 'render') addMenuItem();
         });
-
-        var timer = setInterval(function() {
-            addMenuItem();
-            if ($('.menu__item[data-action="rutor_pro"]').length) clearInterval(timer);
-        }, 1000);
+        setInterval(addMenuItem, 2000);
     }
 
     if (window.appready) init();
     else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); });
-
 })();
