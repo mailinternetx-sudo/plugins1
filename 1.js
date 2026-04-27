@@ -13,35 +13,39 @@
         { title: '📡 ТВ передачи',            path: 'televizor' }
     ];
 
+    // Надёжный запрос к Worker
     async function fetchCategory(path, page = 1) {
         try {
             const url = `${PROXY}${path}?page=${page}`;
 
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            const timeout = setTimeout(() => controller.abort(), 15000);
 
             const response = await fetch(url, {
                 signal: controller.signal,
                 headers: { 'Accept': 'application/json' }
             });
 
-            clearTimeout(timeoutId);
+            clearTimeout(timeout);
 
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             let data = await response.json();
 
-            // КРИТИЧНЫЙ ФИКС: всегда возвращаем объект { results: [...] }
+            // === КРИТИЧНЫЙ ФИКС ===
+            // Всегда возвращаем правильную структуру
             if (Array.isArray(data)) {
                 data = { results: data };
-            } else if (data && !data.results) {
+            } else if (!data || typeof data !== 'object') {
+                data = { results: [] };
+            } else if (!data.results) {
                 data.results = [];
             }
 
             // Приводим id к числу
-            if (data.results && Array.isArray(data.results)) {
+            if (Array.isArray(data.results)) {
                 data.results = data.results.map(item => {
-                    if (item && item.id !== undefined) {
+                    if (item && item.id !== undefined && item.id !== null) {
                         item.id = typeof item.id === 'number' ? item.id : parseInt(item.id, 10) || 0;
                     }
                     return item;
@@ -50,31 +54,29 @@
 
             return data;
         } catch (e) {
-            console.error(`[Rutor Pro] Fetch failed for "${path}":`, e.message);
-            throw e;
+            console.error(`[Rutor Pro] Fetch failed "${path}":`, e.message);
+            return { results: [] };   // возвращаем пустой результат вместо краша
         }
     }
 
     function Api() {
         this.category = async function (params, onSuccess, onError) {
             try {
-                let categoryPath = (params.url || params.category || '').trim();
+                const categoryPath = (params.url || params.category || '').trim();
 
                 let data;
 
                 if (!categoryPath || categoryPath === 'categories' || categoryPath === 'menu') {
-                    // Список категорий
                     data = await fetchCategory('categories');
                 } else {
-                    // Конкретная категория (movies, top24 и т.д.)
                     data = await fetchCategory(categoryPath);
                 }
 
-                // Финальная гарантия правильного формата
+                // Финальная гарантия формата для Lampa
                 const response = {
-                    results: (data && data.results) ? data.results : [],
-                    page: data.page || 1,
-                    total_pages: data.total_pages || 1,
+                    results: Array.isArray(data.results) ? data.results : [],
+                    page: typeof data.page === 'number' ? data.page : 1,
+                    total_pages: typeof data.total_pages === 'number' ? data.total_pages : 1,
                     more: false,
                     source: SOURCE,
                     url: categoryPath
@@ -84,8 +86,8 @@
 
             } catch (e) {
                 console.error('[Rutor Pro] Category error:', e);
-                if (onError) onError(e);
-                else Lampa.Noty.show('Rutor Pro: Ошибка загрузки данных', { timeout: 5000 });
+                const emptyResponse = { results: [], page: 1, total_pages: 1, more: false, source: SOURCE };
+                onSuccess(emptyResponse);   // важно: не падаем, а возвращаем пустой результат
             }
         };
 
@@ -103,7 +105,7 @@
         const tryAdd = () => {
             attempts++;
             const menu = document.querySelector('.menu__list') || document.querySelector('.menu .menu__list');
-            if (!menu && attempts < 15) {
+            if (!menu && attempts < 12) {
                 setTimeout(tryAdd, 800);
                 return;
             }
@@ -123,7 +125,7 @@
                 });
             });
 
-            menu.appendChild(li);
+            if (menu) menu.appendChild(li);
         };
 
         setTimeout(tryAdd, 1000);
