@@ -23,12 +23,6 @@
             if (Array.isArray(data)) data = { results: data };
             if (!data || !Array.isArray(data.results)) data = { results: [] };
 
-            // Приводим id к числу
-            data.results = data.results.map(item => {
-                if (item && item.id != null) item.id = parseInt(item.id, 10) || 0;
-                return item;
-            });
-
             return data;
         } catch (e) {
             console.error(`[Rutor Pro] Fetch error ${path}:`, e.message);
@@ -40,42 +34,50 @@
         this.category = async function (params, onSuccess) {
             console.log(`[Rutor Pro] category() вызвана, url="${params.url || ''}"`);
 
-            const categoryPath = (params.url || '').trim() || 'categories';
+            const isMenu = !params.url || params.url === '' || params.url === 'categories';
 
-            const data = await fetchCategory(categoryPath);
+            if (isMenu) {
+                // === СПИСОК КАТЕГОРИЙ ===
+                const data = await fetchCategory('categories');
 
-            let response;
+                const results = (data.results || []).map((cat, index) => ({
+                    id: index + 1000,                    // обязательно число
+                    title: cat.title || cat.name || 'Категория',
+                    url: cat.url || cat.path || '',
+                    type: 'line',
+                    card_type: 'line',                   // добавлено
+                    source: SOURCE,
+                    page: 1,
+                    more: true,
+                    action: 'category'                   // добавлено
+                }));
 
-            if (!categoryPath || categoryPath === 'categories') {
-                // === СПИСОК КАТЕГОРИЙ (меню) ===
-                response = {
-                    results: (data.results || []).map(cat => ({
-                        title: cat.title || cat.name || 'Без названия',
-                        url: cat.url || cat.path || '',
-                        type: 'line',                    // важно для Lampa
-                        source: SOURCE,
-                        page: 1,
-                        more: true
-                    })),
+                const response = {
+                    results: results,
                     page: 1,
                     total_pages: 1,
                     more: false,
                     source: SOURCE
                 };
+
+                console.log(`[Rutor Pro] Передаём меню с ${results.length} категориями`);
+                onSuccess(response);
+
             } else {
-                // === КОНКРЕТНАЯ КАТЕГОРИЯ (фильмы/сериалы) ===
-                response = {
+                // === КОНКРЕТНАЯ КАТЕГОРИЯ ===
+                const data = await fetchCategory(params.url);
+
+                const response = {
                     results: Array.isArray(data.results) ? data.results : [],
                     page: 1,
                     total_pages: 1,
                     more: false,
                     source: SOURCE,
-                    url: categoryPath
+                    url: params.url
                 };
-            }
 
-            console.log(`[Rutor Pro] onSuccess → ${response.results.length} элементов (type: ${response.results[0]?.type || '—'})`);
-            onSuccess(response);
+                onSuccess(response);
+            }
         };
 
         this.full = function (params, onSuccess, onError) {
