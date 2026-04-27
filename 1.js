@@ -3,10 +3,10 @@
 
     const SOURCE = 'Rutor Pro';
     
-    // ⚠️ Замени на свой актуальный адрес Worker
+    // ⚠️ Замените на ваш актуальный адрес Worker
     const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    // Этот массив теперь используется только как fallback (на случай ошибки Worker)
+    // Fallback категории, если Worker недоступен
     const CATEGORIES_FALLBACK = [
         { title: '🔥 Топ торренты за 24 часа', path: 'top24' },
         { title: '🎬 Зарубежные фильмы',      path: 'movies' },
@@ -15,19 +15,19 @@
         { title: '🇷🇺 Русские сериалы',       path: 'tv_shows_ru' },
         { title: '📡 ТВ передачи',            path: 'televizor' }
     ];
-    // Улучшенная функция запроса с таймаутом и защитой
+
+    // Основная функция запроса к Worker (исправлена CORS ошибка)
     async function fetchCategory(path, page = 1) {
         try {
             const url = `${PROXY}${path}?page=${page}`;
             
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 секунд — комфортно для WebOS
+            const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 секунд
 
             const response = await fetch(url, {
                 signal: controller.signal,
                 headers: {
-                    'Accept': 'application/json',
-                    'Cache-Control': 'no-cache'
+                    'Accept': 'application/json'
                 }
             });
 
@@ -39,7 +39,7 @@
 
             const data = await response.json();
 
-            // Принудительно делаем id числом (очень важно для Lampa)
+            // Принудительно делаем id числом (критично для Lampa)
             if (data.results && Array.isArray(data.results)) {
                 data.results = data.results.map(item => {
                     if (item.id !== undefined && item.id !== null) {
@@ -55,24 +55,23 @@
             throw e;
         }
     }
+
     function Api() {
         this.category = async function (params, onSuccess, onError) {
             try {
                 const currentPage = params.page || 1;
                 let categoryPath = (params.url || params.category || '').trim();
 
-                // === ГЛАВНЫЙ ФИКС ===
-                // Если нет пути или запросили категории — запрашиваем с Worker
+                // Если нет пути — запрашиваем список категорий
                 if (!categoryPath || categoryPath === '' || categoryPath === 'categories' || categoryPath === 'menu') {
                     const data = await fetchCategory('categories', 1);
                     
-                    // Если Worker вернул данные — используем их
                     if (data && data.results && data.results.length > 0) {
                         onSuccess(data);
                         return;
                     }
                     
-                    // Fallback на статический список (если Worker не ответил)
+                    // Fallback, если Worker не ответил
                     console.warn('[Rutor Pro] Используем fallback категорий');
                     const fallbackLines = CATEGORIES_FALLBACK.map(cat => ({
                         title: cat.title,
@@ -86,7 +85,7 @@
                     return;
                 }
 
-                // Обычный запрос категории (movies, top24 и т.д.)
+                // Запрос конкретной категории
                 const data = await fetchCategory(categoryPath, currentPage);
 
                 const response = {
@@ -102,26 +101,25 @@
 
             } catch (e) {
                 console.error('[Rutor Pro] Category error:', e);
-                
-                // Показываем пользователю понятную ошибку
                 if (onError) {
                     onError(e);
                 } else {
-                    Lampa.Noty.show('Rutor Pro: Ошибка загрузки. Проверьте подключение.', { timeout: 4000 });
+                    Lampa.Noty.show('Rutor Pro: Не удалось загрузить данные. Проверьте подключение.', { timeout: 5000 });
                 }
             }
         };
 
-        // Детальная карточка — используем TMDB
+        // Детальная карточка через TMDB
         this.full = function (params, onSuccess, onError) {
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
 
-        // Поиск — тоже через TMDB
+        // Поиск через TMDB
         this.search = function (params, onSuccess, onError) {
             Lampa.Api.sources.tmdb.search(params, onSuccess, onError);
         };
     }
+
     // Добавление кнопки в главное меню
     function addButton() {
         let attempts = 0;
@@ -129,17 +127,15 @@
 
         let tryAdd = () => {
             attempts++;
-            const menu = document.querySelector('.menu__list') || 
-                        document.querySelector('.menu .menu__list');
+            const menu = document.querySelector('.menu__list') || document.querySelector('.menu .menu__list');
 
             if (!menu) {
                 if (attempts < maxAttempts) {
-                    setTimeout(tryAdd, 700);
+                    setTimeout(tryAdd, 800);
                 }
                 return;
             }
 
-            // Защита от дубликатов
             if (document.querySelector('[data-rutor-pro]')) return;
 
             const li = document.createElement('li');
@@ -155,7 +151,7 @@
                     component: 'category',
                     source: SOURCE,
                     title: SOURCE,
-                    url: ''   // пустой url = показать категории
+                    url: ''
                 });
             });
 
@@ -163,7 +159,7 @@
             console.log(`[${SOURCE}] Кнопка добавлена в меню`);
         };
 
-        setTimeout(tryAdd, 1000);
+        setTimeout(tryAdd, 1200);
     }
 
     // Запуск плагина
