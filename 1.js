@@ -2,8 +2,8 @@
     'use strict';
 
     var SOURCE_NAME = 'Rutor Pro';
+    // ЗАМЕНИТЕ НА ВАШ URL ВОРКЕРА
     var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
-    var ICON = '<svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg>';
 
     var CATEGORIES = [
         { title: 'Топ 24 часа', url: 'top24' },
@@ -22,13 +22,14 @@
             self.network.silent(url, function (json) {
                 if (json && json.results) {
                     var processed = json.results.map(function(item) {
-                        var proxy = function(path, w) {
-                            if (!path) return '';
-                            var full = path.indexOf('http') === 0 ? path : 'https://image.tmdb.org/t/p/w' + w + path;
-                            return 'https://images.weserv.nl/?url=' + encodeURIComponent(full) + '&w=' + w;
-                        };
-                        item.poster_path = proxy(item.poster_path, 300);
-                        item.backdrop_path = proxy(item.backdrop_path, 1000);
+                        // Если воркер прислал постер, пропускаем его через прокси
+                        if (item.poster_path) {
+                            item.poster_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(item.poster_path) + '&w=300';
+                        }
+                        if (item.backdrop_path) {
+                            item.backdrop_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(item.backdrop_path) + '&w=1000';
+                        }
+                        item.source = 'Rutor Pro';
                         return item;
                     });
                     onComplete(processed);
@@ -38,8 +39,14 @@
 
         self.category = function (params, onSuccess, onError) {
             var rows = CATEGORIES.map(function(cat) {
-                return { title: cat.title, results: [], url: cat.url, source: 'Rutor Pro' };
+                return {
+                    title: cat.title,
+                    results: [],
+                    url: cat.url,
+                    source: 'Rutor Pro'
+                };
             });
+
             var partsData = rows.map(function(row) {
                 return function(callback) {
                     self.fetch(WORKER_URL + row.url, function(items) {
@@ -48,6 +55,7 @@
                     }, callback);
                 };
             });
+
             Lampa.Api.partNext(partsData, 3, onSuccess, onError);
         };
 
@@ -65,18 +73,23 @@
     function init() {
         if (window.rutor_pro_inited) return;
         window.rutor_pro_inited = true;
+
         Lampa.Api.sources['Rutor Pro'] = new RutorApiService();
 
         var addMenuItem = function () {
             if ($('.menu__item[data-action="rutor_pro"]').length) return;
             var item = $('<li class="menu__item selector" data-action="rutor_pro">' +
-                '<div class="menu__ico">' + ICON + '</div>' +
+                '<div class="menu__ico"><svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg></div>' +
                 '<div class="menu__text">' + SOURCE_NAME + '</div>' +
             '</li>');
 
             item.on('hover:enter', function () {
                 Lampa.Activity.push({
-                    title: SOURCE_NAME, component: 'category', source: 'Rutor Pro', method: 'category', url: ''
+                    title: SOURCE_NAME,
+                    component: 'category',
+                    source: 'Rutor Pro',
+                    method: 'category',
+                    url: ''
                 });
             });
 
@@ -87,7 +100,6 @@
         Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready' || e.type === 'render') addMenuItem();
         });
-        setInterval(addMenuItem, 2000);
     }
 
     if (window.appready) init();
