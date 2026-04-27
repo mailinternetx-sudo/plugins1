@@ -2,6 +2,7 @@
     'use strict';
 
     const SOURCE = 'Rutor Pro';
+    // ЗАМЕНИ НА СВОЙ URL WORKER!
     const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
     function Api() {
@@ -25,35 +26,59 @@
         };
     }
 
+    function addMenuItem() {
+        // Проверяем, не добавлена ли кнопка уже
+        if ($('.menu__list [data-rutor-pro="true"]').length) return;
+
+        // Ищем основной список меню
+        const menu = $('.menu__list');
+        if (menu.length) {
+            const item = $(`<li class="menu__item selector" data-rutor-pro="true">
+                <div class="menu__ico">🔥</div>
+                <div class="menu__text">${SOURCE}</div>
+            </li>`);
+
+            item.on('hover:enter', function () {
+                Lampa.Activity.push({
+                    url: '',
+                    title: SOURCE,
+                    component: 'category',
+                    source: SOURCE,
+                    page: 1
+                });
+            });
+
+            // Добавляем после пункта "Сериалы" или просто в конец
+            const serials = menu.find('.menu__item:contains("Сериалы")');
+            if (serials.length) serials.after(item);
+            else menu.append(item);
+            
+            console.log('[Rutor Pro] Кнопка добавлена');
+        }
+    }
+
     function start() {
         if (window.rutor_pro_inited) return;
         window.rutor_pro_inited = true;
 
+        // Регистрация API
         Lampa.Api.sources[SOURCE] = new Api();
 
-        // Добавление в меню через стандартный механизм Lampa
+        // Запускаем цикличную проверку появления меню (актуально для медленных ТВ)
+        const timer = setInterval(() => {
+            addMenuItem();
+            // Если кнопка появилась, можно снизить частоту проверок, но не выключать
+            // (на случай если Lampa перерисует меню полностью)
+        }, 1000);
+
+        // На всякий случай дублируем через стандартный слушатель
         Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') {
-                const menu_item = $(`<li class="menu__item selector" data-rutor-pro="true">
-                    <div class="menu__ico">🔥</div>
-                    <div class="menu__text">${SOURCE}</div>
-                </li>`);
-
-                menu_item.on('hover:enter', function () {
-                    Lampa.Activity.push({
-                        url: '',
-                        title: SOURCE,
-                        component: 'category',
-                        source: SOURCE,
-                        page: 1
-                    });
-                });
-
-                $('.menu .menu__list').append(menu_item);
-            }
+            if (e.type === 'ready') addMenuItem();
         });
     }
 
+    // Запуск
     if (window.appready) start();
     else Lampa.Listener.follow('app', e => { if (e.type === 'ready') start(); });
+
 })();
