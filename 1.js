@@ -3,11 +3,11 @@
 
     const SOURCE = 'Rutor Pro';
     
-    // ⚠️ Убедись, что адрес актуальный
+    // ⚠️ Замени на свой актуальный адрес Worker
     const PROXY = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-    // Пути должны точно совпадать с тем, что обрабатывает Worker
-    const CATEGORIES = [
+    // Этот массив теперь используется только как fallback (на случай ошибки Worker)
+    const CATEGORIES_FALLBACK = [
         { title: '🔥 Топ торренты за 24 часа', path: 'top24' },
         { title: '🎬 Зарубежные фильмы',      path: 'movies' },
         { title: '🇷🇺 Наши фильмы',           path: 'movies_ru' },
@@ -15,22 +15,23 @@
         { title: '🇷🇺 Русские сериалы',       path: 'tv_shows_ru' },
         { title: '📡 ТВ передачи',            path: 'televizor' }
     ];
-
-    // Основная функция запроса к Worker
+    // Улучшенная функция запроса с таймаутом и защитой
     async function fetchCategory(path, page = 1) {
         try {
             const url = `${PROXY}${path}?page=${page}`;
+            
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 10000); // 10 секунд таймаут (важно для WebOS)
+            const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 секунд — комфортно для WebOS
 
-            const response = await fetch(url, { 
+            const response = await fetch(url, {
                 signal: controller.signal,
                 headers: {
-                    'Accept': 'application/json'
+                    'Accept': 'application/json',
+                    'Cache-Control': 'no-cache'
                 }
             });
 
-            clearTimeout(timeout);
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
@@ -38,10 +39,10 @@
 
             const data = await response.json();
 
-            // Гарантируем, что id всегда число (критично для Lampa)
+            // Принудительно делаем id числом (очень важно для Lampa)
             if (data.results && Array.isArray(data.results)) {
                 data.results = data.results.map(item => {
-                    if (item.id !== undefined) {
+                    if (item.id !== undefined && item.id !== null) {
                         item.id = typeof item.id === 'number' ? item.id : parseInt(item.id, 10) || 0;
                     }
                     return item;
@@ -50,7 +51,7 @@
 
             return data;
         } catch (e) {
-            console.error(`[Rutor Pro] Fetch error for ${path}:`, e);
+            console.error(`[Rutor Pro] Fetch failed for "${path}":`, e.message);
             throw e;
         }
     }
@@ -58,67 +59,87 @@
         this.category = async function (params, onSuccess, onError) {
             try {
                 const currentPage = params.page || 1;
-                let categoryPath = params.url || params.category || '';
+                let categoryPath = (params.url || params.category || '').trim();
 
-                // Если категория не выбрана — показываем список рубрик (главный экран плагина)
-                if (!categoryPath) {
-                    const lines = CATEGORIES.map(cat => ({
+                // === ГЛАВНЫЙ ФИКС ===
+                // Если нет пути или запросили категории — запрашиваем с Worker
+                if (!categoryPath || categoryPath === '' || categoryPath === 'categories' || categoryPath === 'menu') {
+                    const data = await fetchCategory('categories', 1);
+                    
+                    // Если Worker вернул данные — используем их
+                    if (data && data.results && data.results.length > 0) {
+                        onSuccess(data);
+                        return;
+                    }
+                    
+                    // Fallback на статический список (если Worker не ответил)
+                    console.warn('[Rutor Pro] Используем fallback категорий');
+                    const fallbackLines = CATEGORIES_FALLBACK.map(cat => ({
                         title: cat.title,
-                        url: cat.path,           // важно: именно path
+                        url: cat.path,
                         type: 'line',
                         source: SOURCE,
                         page: 1,
                         more: true
                     }));
-
-                    onSuccess({ results: lines });
+                    onSuccess({ results: fallbackLines });
                     return;
                 }
 
-                // Запрашиваем контент категории
+                // Обычный запрос категории (movies, top24 и т.д.)
                 const data = await fetchCategory(categoryPath, currentPage);
 
-                const results = data.results || [];
-                const totalPages = data.total_pages || 1;
-
                 const response = {
-                    results: results,
+                    results: data.results || [],
                     page: data.page || currentPage,
-                    total_pages: totalPages,
-                    more: currentPage < totalPages,
+                    total_pages: data.total_pages || 1,
+                    more: currentPage < (data.total_pages || 1),
                     source: SOURCE,
                     url: categoryPath
                 };
 
                 onSuccess(response);
+
             } catch (e) {
                 console.error('[Rutor Pro] Category error:', e);
-                onError(e);
+                
+                // Показываем пользователю понятную ошибку
+                if (onError) {
+                    onError(e);
+                } else {
+                    Lampa.Noty.show('Rutor Pro: Ошибка загрузки. Проверьте подключение.', { timeout: 4000 });
+                }
             }
         };
 
-        // Детальная информация — делегируем TMDB (самый стабильный вариант)
+        // Детальная карточка — используем TMDB
         this.full = function (params, onSuccess, onError) {
             Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
         };
 
-        // Поиск (опционально, можно оставить пустым или тоже через TMDB)
+        // Поиск — тоже через TMDB
         this.search = function (params, onSuccess, onError) {
             Lampa.Api.sources.tmdb.search(params, onSuccess, onError);
         };
     }
-    // Добавление кнопки в главное меню Lampa
+    // Добавление кнопки в главное меню
     function addButton() {
+        let attempts = 0;
+        const maxAttempts = 15;
+
         let tryAdd = () => {
-            const menu = document.querySelector('.menu .menu__list') || 
-                        document.querySelector('.menu__list');
-            
+            attempts++;
+            const menu = document.querySelector('.menu__list') || 
+                        document.querySelector('.menu .menu__list');
+
             if (!menu) {
-                setTimeout(tryAdd, 600);
+                if (attempts < maxAttempts) {
+                    setTimeout(tryAdd, 700);
+                }
                 return;
             }
 
-            // Защита от дублирования
+            // Защита от дубликатов
             if (document.querySelector('[data-rutor-pro]')) return;
 
             const li = document.createElement('li');
@@ -134,15 +155,15 @@
                     component: 'category',
                     source: SOURCE,
                     title: SOURCE,
-                    url: ''                    // пустой url = показать категории
+                    url: ''   // пустой url = показать категории
                 });
             });
 
             menu.appendChild(li);
+            console.log(`[${SOURCE}] Кнопка добавлена в меню`);
         };
 
-        // Запускаем с небольшой задержкой
-        setTimeout(tryAdd, 800);
+        setTimeout(tryAdd, 1000);
     }
 
     // Запуск плагина
@@ -152,7 +173,7 @@
         const api = new Api();
         Lampa.Api.sources[SOURCE] = api;
 
-        console.log(`[${SOURCE}] Плагин успешно загружен`);
+        console.log(`[${SOURCE}] Плагин успешно инициализирован`);
         addButton();
     }
 
@@ -166,5 +187,3 @@
     }
 
 })();
-
-
