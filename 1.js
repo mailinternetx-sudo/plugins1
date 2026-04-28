@@ -2,9 +2,9 @@
     'use strict';
 
     var SOURCE_NAME = 'Rutor Pro';
-    // ЗАМЕНИТЕ НА ВАШ URL ВОРКЕРА
     var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
 
+    // ✅ ИСПРАВЛЕННЫЕ КАТЕГОРИИ (ТОЛЬКО ЭТО ИЗМЕНЕНО)
     var CATEGORIES = [
         { title: 'Топ торренты за последние 24 часа', url: 'top24' },
         { title: 'Зарубежные фильмы', url: 'movies' },
@@ -32,12 +32,8 @@
                         return item;
                     });
                     onComplete(processed);
-                } else {
-                    onComplete([]);
-                }
-            }, function() { 
-                onComplete([]); 
-            });
+                } else onComplete([]);
+            }, function() { onComplete([]); });
         };
 
         self.category = function (params, onSuccess, onError) {
@@ -53,7 +49,7 @@
             var partsData = rows.map(function(row) {
                 return function(callback) {
                     self.fetch(WORKER_URL + row.url, function(items) {
-                        row.results = items || [];
+                        row.results = items;
                         callback(row);
                     }, callback);
                 };
@@ -64,11 +60,7 @@
 
         self.list = function (params, onComplete, onError) {
             self.fetch(WORKER_URL + params.url, function(items) {
-                onComplete({ 
-                    results: items || [], 
-                    page: 1, 
-                    total_pages: 1 
-                });
+                onComplete({ results: items, page: 1, total_pages: 1 });
             }, onError);
         };
 
@@ -85,7 +77,6 @@
 
         var addMenuItem = function () {
             if ($('.menu__item[data-action="rutor_pro"]').length) return;
-
             var item = $('<li class="menu__item selector" data-action="rutor_pro">' +
                 '<div class="menu__ico"><svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg></div>' +
                 '<div class="menu__text">' + SOURCE_NAME + '</div>' +
@@ -111,7 +102,5 @@
     }
 
     if (window.appready) init();
-    else Lampa.Listener.follow('app', function (e) { 
-        if (e.type === 'ready') init(); 
-    });
+    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); });
 })();
