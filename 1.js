@@ -6,12 +6,12 @@
     var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
 
     var CATEGORIES = [
-        { title: 'Топ торренты за последние 24 часа', url: 'top24' },
+        { title: 'Топ 24 часа', url: 'top24' },
         { title: 'Зарубежные фильмы', url: 'movies' },
         { title: 'Наши фильмы', url: 'movies_ru' },
         { title: 'Зарубежные сериалы', url: 'tv_shows' },
-        { title: 'Русские сериалы', url: 'tv_shows_ru' },
-        { title: 'Телевизор', url: 'televizor' }
+        { title: 'Наши сериалы', url: 'tv_shows_ru' },
+        { title: 'Телепередачи', url: 'televizor' }
     ];
 
     function RutorApiService() {
