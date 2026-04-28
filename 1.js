@@ -2,7 +2,7 @@
     'use strict';
 
     var SOURCE_NAME = 'Rutor Pro';
-    var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
+    var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
     var CATEGORIES = [
         { title: 'Топ 24 часа', url: 'top24' },
@@ -17,13 +17,7 @@
         var self = this;
         self.network = new Lampa.Reguest();
 
-        // Определяем тип контента по URL категории
-        function getCategoryType(url) {
-            if (url.includes('tv_shows') || url.includes('seriali')) return 'tv';
-            if (url.includes('televizor')) return 'tv';
-            return 'movie';
-        }
-
+        // ===== FETCH (универсальный) =====
         self.fetch = function (url, onComplete) {
             self.network.silent(url, function (json) {
                 if (!json || !json.results) {
@@ -31,111 +25,126 @@
                     return;
                 }
 
-                var results = [];
-                var pending = json.results.length;
-
-                if (pending === 0) {
-                    onComplete([]);
-                    return;
-                }
-
-                json.results.forEach(function(rawTitle) {
-                    var titleStr = typeof rawTitle === 'string' ? rawTitle : (rawTitle.title || rawTitle.name || '');
-                    var catType = getCategoryType(url);
-
-                    // Создаём базовую карточку
-                    var card = {
-                        title: titleStr,
-                        name: titleStr,
-                        original_title: titleStr,
-                        poster_path: '',
-                        backdrop_path: '',
-                        overview: 'Загрузка данных...',
-                        vote_average: 0,
-                        type: catType,
-                        source: 'Rutor Pro',
-                        url: url
-                    };
-
-                    // Пытаемся обогатить карточку через TMDB
-                    Lampa.Api.sources.tmdb.search({
-                        query: titleStr,
-                        type: catType,
-                        language: 'ru-RU'
-                    }, function(data) {
-                        if (data && data.results && data.results[0]) {
-                            var found = data.results[0];
-                            card.id = found.id;
-                            card.title = found.title || found.name || titleStr;
-                            card.name = card.title;
-                            card.poster_path = found.poster_path ? 'https://image.tmdb.org/t/p/w300' + found.poster_path : '';
-                            card.backdrop_path = found.backdrop_path ? 'https://image.tmdb.org/t/p/w1280' + found.backdrop_path : '';
-                            card.overview = found.overview || card.overview;
-                            card.vote_average = found.vote_average || 0;
-                            card.release_date = found.release_date || found.first_air_date;
-                        }
-                        results.push(card);
-                        pending--;
-                        if (pending === 0) onComplete(results);
-                    }, function() {
-                        results.push(card);
-                        pending--;
-                        if (pending === 0) onComplete(results);
-                    });
+                var results = json.results.map(function (item) {
+                    return normalizeCard(item, url);
                 });
-            }, function() {
+
+                onComplete(results);
+            }, function () {
                 onComplete([]);
             });
         };
 
+        // ===== SEARCH (КАК В NMPRS) =====
+        self.search = function (params, onComplete, onError) {
+            var query = params.query || '';
+
+            if (!query) {
+                onComplete({ results: [] });
+                return;
+            }
+
+            var url = WORKER_URL + 'search?query=' + encodeURIComponent(query);
+
+            self.network.silent(url, function (json) {
+                if (!json || !json.results) {
+                    onComplete({ results: [] });
+                    return;
+                }
+
+                var results = json.results.map(function (item) {
+                    return normalizeCard(item, 'search');
+                });
+
+                onComplete({
+                    results: results,
+                    page: 1,
+                    total_pages: 1
+                });
+            }, function () {
+                onComplete({ results: [] });
+            });
+        };
+
+        // ===== CATEGORY =====
         self.category = function (params, onSuccess, onError) {
             var rows = [];
 
-            function loadCategory(index) {
+            function load(index) {
                 if (index >= CATEGORIES.length) {
                     onSuccess(rows);
                     return;
                 }
 
                 var cat = CATEGORIES[index];
-                var row = {
-                    title: cat.title,
-                    results: [],
-                    url: cat.url,
-                    source: 'Rutor Pro'
-                };
 
-                self.fetch(WORKER_URL + cat.url, function(items) {
-                    row.results = items;
-                    rows.push(row);
-                    loadCategory(index + 1);
+                self.fetch(WORKER_URL + cat.url, function (items) {
+                    rows.push({
+                        title: cat.title,
+                        results: items,
+                        url: cat.url,
+                        source: SOURCE_NAME
+                    });
+
+                    load(index + 1);
                 });
             }
 
-            loadCategory(0);
+            load(0);
         };
 
+        // ===== LIST =====
         self.list = function (params, onComplete, onError) {
-            self.fetch(WORKER_URL + params.url, function(items) {
-                onComplete({ results: items, page: 1, total_pages: 1 });
+            self.fetch(WORKER_URL + params.url, function (items) {
+                onComplete({
+                    results: items,
+                    page: 1,
+                    total_pages: 1
+                });
             });
         };
 
+        // ===== FULL =====
         self.full = function (params, onSuccess, onError) {
-            // Для наших карточек используем TMDB
             if (params.id) {
                 Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
             } else {
                 onSuccess(params);
             }
         };
+
+        // ===== NORMALIZE =====
+        function normalizeCard(item, url) {
+            return {
+                id: item.id || Math.random(),
+                title: item.title || item.name,
+                name: item.name || item.title,
+                original_title: item.original_title || item.title,
+                poster_path: item.poster_path || '',
+                backdrop_path: item.backdrop_path || '',
+                overview: item.overview || '',
+                vote_average: item.vote_average || 0,
+                release_date: item.release_date || item.first_air_date || '',
+                first_air_date: item.first_air_date || '',
+                type: item.type || detectType(url),
+                source: SOURCE_NAME,
+                method: 'full'
+            };
+        }
+
+        function detectType(url) {
+            if (!url) return 'movie';
+            if (url.includes('tv') || url.includes('serial')) return 'tv';
+            return 'movie';
+        }
     }
 
+    // ===== MENU =====
     function addMenuItem() {
         if ($('.menu__item[data-action="rutor_pro"]').length) return;
 
         var item = $('<li class="menu__item selector" data-action="rutor_pro">' +
-            '<div class="menu__ico"><svg height="36" viewBox="0 0 24 24" width="36" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg></div>' +
+            '<div class="menu__ico"><svg height="36" viewBox="0 0 24 24" width="36"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"/></svg></div>' +
             '<div class="menu__text">' + SOURCE_NAME + '</div>' +
         '</li>');
 
@@ -143,33 +152,38 @@
             Lampa.Activity.push({
                 title: SOURCE_NAME,
                 component: 'category',
-                source: 'Rutor Pro',
-                method: 'category',
-                url: ''
+                source: SOURCE_NAME,
+                method: 'category'
             });
         });
 
         var target = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').parent();
+
         if (target.length) target.after(item);
         else $('.menu__list').append(item);
     }
 
+    // ===== INIT =====
     function init() {
-        if (window.rutor_pro_inited) return;
-        window.rutor_pro_inited = true;
+        if (window.rutor_pro_ready) return;
+        window.rutor_pro_ready = true;
 
-        Lampa.Api.sources['Rutor Pro'] = new RutorApiService();
+        Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
 
         Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready' || e.type === 'render') {
-                setTimeout(addMenuItem, 1200);
+                setTimeout(addMenuItem, 1000);
             }
         });
-        setTimeout(addMenuItem, 2500);
+
+        setTimeout(addMenuItem, 2000);
     }
 
     if (window.appready) init();
-    else Lampa.Listener.follow('app', function (e) {
-        if (e.type === 'ready') init();
-    });
+    else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') init();
+        });
+    }
+
 })();
