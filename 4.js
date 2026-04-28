@@ -1,190 +1,201 @@
 (function () {
-  'use strict';
+    'use strict';
 
-  // === КОНФИГУРАЦИЯ ===
-  var SOURCE_NAME = 'Rutor Pro';
-  var PROXY_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
-  var ICON = '🔥';
+    var SOURCE_NAME = 'Rutor Pro';
+    var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-  // === НОРМАЛИЗАЦИЯ ЭЛЕМЕНТА ===
-  function normalizeItem(item) {
-    if (!item) return null;
-    var dateStr = item.release_date || item.first_air_date || '';
-    var year = dateStr ? parseInt(dateStr.substring(0, 4), 10) : (item.year || 0);
-    
-    return {
-      id: parseInt(item.id) || 0,
-      title: item.title || item.name || 'Без названия',
-      name: item.name || item.title || 'Без названия',
-      original_title: item.original_title || '',
-      poster_path: item.poster_path || '',
-      backdrop_path: item.backdrop_path || '',
-      overview: item.overview || '',
-      vote_average: parseFloat(item.vote_average) || 0,
-      type: item.type || 'movie',
-      media_type: item.media_type || item.type || 'movie',
-      original_language: item.original_language || 'en',
-      release_date: item.release_date || '',
-      first_air_date: item.first_air_date || '',
-      year: year,
-      number_of_seasons: item.number_of_seasons || 0,
-      promo_title: item.promo_title || item.title || '',
-      promo: item.promo || item.overview || '',
-      source: SOURCE_NAME
-    };
-  }
+    var CATEGORIES = [
+        { title: 'Топ 24 часа',      url: 'top24' },
+        { title: 'Зарубежные фильмы', url: 'movies' },
+        { title: 'Наши фильмы',      url: 'movies_ru' },
+        { title: 'Зарубежные сериалы', url: 'tv_shows' },
+        { title: 'Русские сериалы',   url: 'tv_shows_ru' },
+        { title: 'Телевизор',         url: 'televizor' }
+    ];
 
-  // === HTTP ЗАПРОС ===
-  function xhrGet(url, onSuccess, onError) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
-    xhr.onreadystatechange = function () {
-      if (xhr.readyState === 4) {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            onSuccess(JSON.parse(xhr.responseText));
-          } catch (e) {
-            // ДЕБАГ: Если пришел не JSON, выводим первые 200 символов ответа
-            console.error('⚠️ Worker прислал не JSON! Ответ сервера:', xhr.responseText.substring(0, 200));
-            onError(new Error('JSON parse error'));
-          }
-        } else {
-          onError(new Error('HTTP ' + xhr.status));
+    function RutorApiService() {
+        var self = this;
+        self.network = new Lampa.Reguest();
+
+        // ====================== FETCH ======================
+        self.fetch = function (url, onComplete) {
+            self.network.silent(url, function (json) {
+                if (!json || !json.results) {
+                    onComplete([]);
+                    return;
+                }
+
+                var results = json.results.map(function (item) {
+                    return normalizeCard(item, url);
+                });
+
+                onComplete(results);
+            }, function () {
+                onComplete([]);
+            });
+        };
+
+        // ====================== SEARCH ======================
+        self.search = function (params, onComplete) {
+            var query = params.query || '';
+            if (!query) return onComplete({ results: [] });
+
+            var url = WORKER_URL + 'search?query=' + encodeURIComponent(query);
+
+            self.network.silent(url, function (json) {
+                if (!json || !json.results) {
+                    return onComplete({ results: [] });
+                }
+
+                var results = json.results.map(item => normalizeCard(item, 'search'));
+
+                onComplete({
+                    results: results,
+                    page: 1,
+                    total_pages: 1
+                });
+            }, () => onComplete({ results: [] }));
+        };
+
+        // ====================== CATEGORY ======================
+        self.category = function (params, onSuccess) {
+            var rows = [];
+
+            function load(index) {
+                if (index >= CATEGORIES.length) {
+                    onSuccess(rows);
+                    return;
+                }
+
+                var cat = CATEGORIES[index];
+
+                self.fetch(WORKER_URL + cat.url, function (items) {
+                    if (items.length > 0) {
+                        rows.push({
+                            title: cat.title,
+                            results: items,
+                            url: cat.url,
+                            source: SOURCE_NAME
+                        });
+                    }
+                    load(index + 1);
+                });
+            }
+
+            load(0);
+        };
+
+        // ====================== LIST (пагинация) ======================
+        self.list = function (params, onComplete) {
+            var page = params.page || 1;
+            var pageUrl = WORKER_URL + params.url + '?page=' + page;
+
+            self.fetch(pageUrl, function (items) {
+                onComplete({
+                    results: items,
+                    page: page,
+                    total_pages: 10,           // можно потом сделать умнее
+                    total_results: items.length * 5
+                });
+            });
+        };
+
+        // ====================== FULL (главная фиксация) ======================
+        self.full = function (params, onSuccess, onError) {
+            // Если карточка уже содержит достаточно данных — сразу возвращаем
+            if (params.overview && params.poster_path) {
+                onSuccess(params);
+                return;
+            }
+
+            // Если есть нормальный TMDB ID — используем TMDB
+            if (params.id && Number.isInteger(params.id) && params.id > 1000) {
+                Lampa.Api.sources.tmdb.full(params, onSuccess, onError || (() => {}));
+            } 
+            // Иначе — просто возвращаем то, что есть (самое важное для сериалов и ТВ)
+            else {
+                onSuccess(params);
+            }
+        };
+
+        // ====================== NORMALIZE ======================
+        function normalizeCard(item, sourceUrl) {
+            var isTv = item.type === 'tv' || 
+                       sourceUrl.includes('tv_shows') || 
+                       sourceUrl.includes('serial') || 
+                       sourceUrl.includes('televizor');
+
+            return {
+                id: item.id || Math.floor(Math.random() * 10000000),
+                title: item.title || item.name,
+                name: item.name || item.title,
+                original_title: item.original_title || item.title,
+                poster_path: item.poster_path || '',
+                backdrop_path: item.backdrop_path || '',
+                overview: item.overview || 'Описание отсутствует',
+                vote_average: parseFloat(item.vote_average) || 0,
+                release_date: item.release_date || item.first_air_date || '',
+                first_air_date: item.first_air_date || '',
+                type: isTv ? 'tv' : 'movie',
+                source: SOURCE_NAME,
+                method: 'full',
+                // Дополнительно для Lampa
+                genres: item.genres || [],
+                runtime: item.runtime || null
+            };
         }
-      }
-    };
-    xhr.onerror = function () {
-      onError(new Error('Network error'));
-    };
-    xhr.send();
-  }
-
-  // === API SERVICE ===
-  function Api() {
-    var self = this;
-
-    self.category = function (params, onSuccess, onError) {
-      params = params || {};
-
-      // 🔹 1. ЗАПРОС СПИСКА КАТЕГОРИЙ
-      if (!params.url || params.url === '__categories__') {
-        
-        var catUrl = PROXY_URL + 'categories';
-        
-        xhrGet(catUrl, function (data) {
-          if (!data || !Array.isArray(data.results)) {
-            onError(new Error('Не удалось загрузить категории'));
-            return;
-          }
-
-          data.results.forEach(function (cat) {
-            cat.source = SOURCE_NAME;
-            cat.url = cat.url; 
-            cat.poster_path = ''; 
-          });
-
-          onSuccess(data);
-
-        }, function (err) {
-          console.error('Rutor Pro categories error:', err);
-          onError(err);
-        });
-
-        return;
-      }
-
-      // 🔹 2. ЗАПРОС ФИЛЬМОВ
-      var page = params.page || 1;
-      var requestUrl = PROXY_URL + params.url + '?page=' + page; 
-
-      xhrGet(requestUrl, function (data) {
-        if (!data || !Array.isArray(data.results)) {
-          onError(new Error('Неверная структура ответа от сервера'));
-          return;
-        }
-
-        var items = data.results
-          .map(normalizeItem)
-          .filter(function (item) {
-            return item && item.id;
-          });
-
-        onSuccess({
-          results: items,
-          page: data.page || page,
-          total_pages: data.total_pages || 1,
-          total_results: data.total_results || items.length,
-          source: SOURCE_NAME,
-          url: params.url
-        });
-
-      }, function (err) {
-        console.error('Rutor Pro items error:', err);
-        onError(err);
-      });
-    };
-
-    self.full = function (params, onSuccess, onError) {
-      var card = params.card || {};
-      var method = (card.type === 'tv' || card.number_of_seasons) ? 'tv' : 'movie';
-      
-      if (Lampa.Api.sources.tmdb && Lampa.Api.sources.tmdb.full) {
-        Lampa.Api.sources.tmdb.full({
-          card: card,
-          method: method
-        }, onSuccess, function () {
-          onSuccess(card); 
-        });
-      } else {
-        onSuccess(card);
-      }
-    };
-  }
-
-  if (!Lampa.Api.sources[SOURCE_NAME]) {
-    Lampa.Api.sources[SOURCE_NAME] = new Api();
-  }
-
-  function addMenuItem() {
-    var menu = document.querySelector('.menu .menu__list') || document.querySelector('.menu__list');
-    if (!menu) return false;
-    if (menu.querySelector('[data-rutor-source]')) return true;
-
-    var li = document.createElement('li');
-    li.className = 'menu__item selector';
-    li.setAttribute('data-rutor-source', '1');
-    li.innerHTML = '<div class="menu__ico">' + ICON + '</div><div class="menu__text">' + SOURCE_NAME + '</div>';
-    
-    li.addEventListener('hover:enter', function () {
-      Lampa.Activity.push({
-        title: SOURCE_NAME,
-        component: 'category',
-        source: SOURCE_NAME,
-        url: '__categories__' 
-      });
-    });
-    
-    menu.appendChild(li);
-    return true;
-  }
-
-  function init() {
-    if (!addMenuItem()) {
-      var obs = new MutationObserver(function () {
-        if (addMenuItem()) obs.disconnect();
-      });
-      obs.observe(document.body, { childList: true, subtree: true });
-      setTimeout(function () {
-        obs.disconnect();
-      }, 10000);
     }
-  }
 
-  if (window.appready) {
-    init();
-  } else {
-    Lampa.Listener.follow('app', function (e) {
-      if (e.type === 'ready') init();
-    });
-  }
+    // ====================== MENU ======================
+    function addMenuItem() {
+        if ($('.menu__item[data-action="rutor_pro"]').length) return;
+
+        var item = $(`
+            <li class="menu__item selector" data-action="rutor_pro">
+                <div class="menu__ico">
+                    <svg height="36" viewBox="0 0 24 24" width="36">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"/>
+                    </svg>
+                </div>
+                <div class="menu__text">${SOURCE_NAME}</div>
+            </li>
+        `);
+
+        item.on('hover:enter', function () {
+            Lampa.Activity.push({
+                title: SOURCE_NAME,
+                component: 'category',
+                source: SOURCE_NAME,
+                method: 'category'
+            });
+        });
+
+        var target = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').parent();
+        if (target.length) target.after(item);
+        else $('.menu__list').append(item);
+    }
+
+    // ====================== INIT ======================
+    function init() {
+        if (window.rutor_pro_ready) return;
+        window.rutor_pro_ready = true;
+
+        Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
+
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready' || e.type === 'render') {
+                setTimeout(addMenuItem, 800);
+            }
+        });
+
+        setTimeout(addMenuItem, 1500);
+    }
+
+    if (window.appready) init();
+    else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') init();
+        });
+    }
+
 })();
