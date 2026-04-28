@@ -4,7 +4,7 @@
     var SOURCE_NAME = 'Rutor Pro';
     var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/'; 
 
-    // ✅ ИСПРАВЛЕННЫЕ КАТЕГОРИИ (ТОЛЬКО ЭТО ИЗМЕНЕНО)
+    // ✅ ТОЛЬКО ИСПРАВЛЕНЫ НАЗВАНИЯ КАТЕГОРИЙ
     var CATEGORIES = [
         { title: 'Топ торренты за последние 24 часа', url: 'top24' },
         { title: 'Зарубежные фильмы', url: 'movies' },
