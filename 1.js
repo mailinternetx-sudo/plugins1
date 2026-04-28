@@ -10,8 +10,8 @@
         { title: 'Зарубежные фильмы', url: 'movies' },
         { title: 'Наши фильмы', url: 'movies_ru' },
         { title: 'Зарубежные сериалы', url: 'tv_shows' },
-        { title: 'Наши сериалы', url: 'tv_shows_ru' },
-        { title: 'Телепередачи', url: 'televizor' }
+        { title: 'Русские сериалы', url: 'tv_shows_ru' },
+        { title: 'Телевизор', url: 'televizor' }
     ];
 
     function RutorApiService() {
