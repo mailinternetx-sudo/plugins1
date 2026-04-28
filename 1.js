@@ -22,7 +22,6 @@
             self.network.silent(url, function (json) {
                 if (json && json.results) {
                     var processed = json.results.map(function(item) {
-                        // Если воркер прислал постер, пропускаем его через прокси
                         if (item.poster_path) {
                             item.poster_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(item.poster_path) + '&w=300';
                         }
