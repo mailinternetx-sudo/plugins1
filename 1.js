@@ -19,7 +19,7 @@
 
         self.fetch = function (url, onComplete, onError) {
             self.network.silent(url, function (json) {
-                if (json && json.results) {
+                if (json && json.results && json.results.length > 0) {
                     var processed = json.results.map(function(item) {
                         if (item.poster_path) {
                             item.poster_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(item.poster_path) + '&w=300';
@@ -37,26 +37,36 @@
             }, function() { onComplete([]); });
         };
 
+        // ←←← ИСПРАВЛЕННЫЙ МЕТОД CATEGORY ←←←
         self.category = function (params, onSuccess, onError) {
-            var rows = CATEGORIES.map(function(cat) {
-                return {
+            var rows = [];
+
+            function loadCategory(index) {
+                if (index >= CATEGORIES.length) {
+                    onSuccess(rows);
+                    return;
+                }
+
+                var cat = CATEGORIES[index];
+                var row = {
                     title: cat.title,
                     results: [],
                     url: cat.url,
                     source: 'Rutor Pro'
                 };
-            });
 
-            var partsData = rows.map(function(row) {
-                return function(callback) {
-                    self.fetch(WORKER_URL + row.url, function(items) {
-                        row.results = items || [];
-                        callback(row);
-                    }, callback);
-                };
-            });
+                self.fetch(WORKER_URL + cat.url, function(items) {
+                    row.results = items || [];
+                    rows.push(row);
+                    loadCategory(index + 1);        // загружаем следующую категорию
+                }, function() {
+                    row.results = [];
+                    rows.push(row);
+                    loadCategory(index + 1);
+                });
+            }
 
-            Lampa.Api.partNext(partsData, 3, onSuccess, onError);
+            loadCategory(0);   // начинаем с первой категории
         };
 
         self.list = function (params, onComplete, onError) {
@@ -88,7 +98,6 @@
             });
         });
 
-        // Более надёжное добавление в меню
         var target = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').parent();
         if (target.length) {
             target.after(item);
@@ -103,23 +112,17 @@
 
         Lampa.Api.sources['Rutor Pro'] = new RutorApiService();
 
-        // Улучшенный запуск добавления кнопки
         Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready' || e.type === 'render' || e.type === 'full_start') {
-                setTimeout(addMenuItem, 800);   // небольшая задержка
+                setTimeout(addMenuItem, 1000);
             }
         });
 
-        // Дополнительная попытка после полной загрузки
-        setTimeout(addMenuItem, 1500);
+        setTimeout(addMenuItem, 2000);
     }
 
-    // Запуск
-    if (window.appready) {
-        init();
-    } else {
-        Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') init();
-        });
-    }
+    if (window.appready) init();
+    else Lampa.Listener.follow('app', function (e) {
+        if (e.type === 'ready') init();
+    });
 })();
