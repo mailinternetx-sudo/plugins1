@@ -17,27 +17,48 @@
         var self = this;
         self.network = new Lampa.Reguest();
 
+        // Основная функция получения данных от worker
         self.fetch = function (url, onComplete, onError) {
             self.network.silent(url, function (json) {
-                if (json && json.results && json.results.length > 0) {
+                if (json && json.results) {
+                    // Преобразуем сырые названия в нормальные карточки Lampa
                     var processed = json.results.map(function(item) {
-                        if (item.poster_path) {
-                            item.poster_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(item.poster_path) + '&w=300';
+                        // Если пришёл уже готовый объект — используем его
+                        if (item.title && (item.poster_path || item.id)) {
+                            if (item.poster_path) {
+                                item.poster_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(item.poster_path) + '&w=300';
+                            }
+                            if (item.backdrop_path) {
+                                item.backdrop_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(item.backdrop_path) + '&w=1000';
+                            }
+                            item.source = 'Rutor Pro';
+                            return item;
                         }
-                        if (item.backdrop_path) {
-                            item.backdrop_path = 'https://images.weserv.nl/?url=' + encodeURIComponent(item.backdrop_path) + '&w=1000';
-                        }
-                        item.source = 'Rutor Pro';
-                        return item;
+                        
+                        // Если пришло только название (строка) — создаём карточку
+                        var title = typeof item === 'string' ? item : (item.title || item.name || '');
+                        return {
+                            title: title,
+                            name: title,
+                            original_title: title,
+                            poster_path: '',           // будет пытаться подтянуть позже через full()
+                            backdrop_path: '',
+                            overview: 'Торрент с Rutor • ' + title,
+                            vote_average: 0,
+                            type: 'movie',             // по умолчанию
+                            source: 'Rutor Pro',
+                            url: ''                    // для list
+                        };
                     });
                     onComplete(processed);
                 } else {
                     onComplete([]);
                 }
-            }, function() { onComplete([]); });
+            }, function() { 
+                onComplete([]); 
+            });
         };
 
-        // ←←← ИСПРАВЛЕННЫЙ МЕТОД CATEGORY ←←←
         self.category = function (params, onSuccess, onError) {
             var rows = [];
 
@@ -58,7 +79,7 @@
                 self.fetch(WORKER_URL + cat.url, function(items) {
                     row.results = items || [];
                     rows.push(row);
-                    loadCategory(index + 1);        // загружаем следующую категорию
+                    loadCategory(index + 1);
                 }, function() {
                     row.results = [];
                     rows.push(row);
@@ -66,17 +87,27 @@
                 });
             }
 
-            loadCategory(0);   // начинаем с первой категории
+            loadCategory(0);
         };
 
         self.list = function (params, onComplete, onError) {
             self.fetch(WORKER_URL + params.url, function(items) {
-                onComplete({ results: items || [], page: 1, total_pages: 1 });
+                onComplete({ 
+                    results: items || [], 
+                    page: 1, 
+                    total_pages: 1 
+                });
             }, onError);
         };
 
+        // При открытии карточки пытаемся получить полную информацию
         self.full = function (params, onSuccess, onError) {
-            Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+            // Если у нас уже есть данные от TMDB/KP — используем их
+            if (params.source === 'Rutor Pro' && params.id) {
+                Lampa.Api.sources.tmdb.full(params, onSuccess, onError);
+            } else {
+                onSuccess(params); // fallback
+            }
         };
     }
 
