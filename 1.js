@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var SOURCE_NAME = 'V10 Pro';
+    var SOURCE_NAME = 'V10';
     var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
@@ -122,7 +122,7 @@
                     onComplete(json.results.map(normalizeCard));
                 },
                 function (err) {
-                    console.warn('[RutorPro] fetch error:', url, err);
+                    console.warn('[V10] fetch error:', url, err);
                     if (onError) onError(err);
                     else onComplete([]);
                 }
@@ -200,9 +200,6 @@
             );
         };
 
-        // ================================================================
-        //  ПОЛНАЯ КАРТОЧКА (исправлено: fallback и обработка ошибок)
-        // ================================================================
         self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
 
@@ -217,7 +214,6 @@
             var savedBg      = params.background_image || (card && card.background_image) || '';
             var savedQuality = params.release_quality  || (card && card.release_quality)  || '';
 
-            // Функция для создания полной карточки из кэшированных данных, если TMDB не сработал
             function fallbackFull(data) {
                 data = data || {};
                 if (!data.title) data.title = card.title || card.name || '';
@@ -226,7 +222,6 @@
                 if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
                 data.type   = method;
                 data.method = method;
-                // Копируем недостающие поля из исходной карточки
                 for (var k in card) {
                     if (card.hasOwnProperty(k) && data[k] === undefined) {
                         data[k] = card[k];
@@ -235,8 +230,6 @@
                 onSuccess(data);
             }
 
-            // Если ID не похож на настоящий TMDB ID (отрицательный, 0, слишком короткий),
-            // сразу отдаём то, что есть, не дёргая API.
             if (!card.id || card.id <= 0 || String(card.id).length < 3) {
                 fallbackFull({});
                 return;
@@ -244,7 +237,6 @@
 
             Lampa.Api.sources.tmdb.full(params, function (data) {
                 if (!data || !data.title) {
-                    // TMDB вернул пустой результат
                     fallbackFull(data);
                 } else {
                     if (!data.img && savedImg) data.img = savedImg;
@@ -255,24 +247,23 @@
                     onSuccess(data);
                 }
             }, function (err) {
-                console.warn('[RutorPro] TMDB full error:', err);
+                console.warn('[V10] TMDB full error:', err);
                 fallbackFull({});
             });
         };
     }
 
     // ================================================================
-    //  ПУНКТ МЕНЮ
+    //  ПУНКТ МЕНЮ (иконка катаны + название V10)
     // ================================================================
     function addMenuItem() {
-        if ($('.menu__item[data-action="rutor_pro"]').length) return;
+        if ($('.menu__item[data-action="v10"]').length) return;
 
         var item = $(
-            '<li class="menu__item selector" data-action="rutor_pro">' +
+            '<li class="menu__item selector" data-action="v10">' +
             '<div class="menu__ico">' +
             '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor">' +
-            '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z' +
-            'M10 16.5v-9l6 4.5-6 4.5z"/>' +
+            '<path d="M12 2L10 22H14L12 2Z M11 6H13V18H11V6Z"/>' +  // простая катана
             '</svg>' +
             '</div>' +
             '<div class="menu__text">' + SOURCE_NAME + '</div>' +
@@ -297,8 +288,8 @@
     //  INIT
     // ================================================================
     function init() {
-        if (window.rutor_pro_ready) return;
-        window.rutor_pro_ready = true;
+        if (window.v10_plugin_ready) return;
+        window.v10_plugin_ready = true;
 
         Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
 
