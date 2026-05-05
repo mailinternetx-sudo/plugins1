@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var SOURCE_NAME = 'Rutor Pro';
+    var SOURCE_NAME = 'V10 Pro';
     var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
