@@ -18,18 +18,8 @@
 
     // ================================================================
     //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
-    //  Lampa ищет постер в таком порядке:
-    //    1. item.img              — прямой URL
-    //    2. item.poster_path      — если начинается с http, берёт как есть,
-    //                               иначе добавляет свой TMDB-префикс
-    //    3. item.poster?.url      — KP формат
     // ================================================================
 
-    /**
-     * Строим полный URL постера из того, что пришло с воркера.
-     * Воркер уже присылает img/background_image — восстанавливаем здесь
-     * на случай старого воркера или пустых полей.
-     */
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
         if (item.poster_path) {
@@ -51,20 +41,15 @@
     }
 
     // ================================================================
-    //  НОРМАЛИЗАЦИЯ КАРТОЧКИ (то, что Lampa ждёт от источника)
+    //  НОРМАЛИЗАЦИЯ КАРТОЧКИ
     //
-    //  Воркер уже присылает все нужные поля — здесь мы:
-    //    • гарантируем наличие каждого поля (даже если пустое)
-    //    • восстанавливаем img/bg если воркер старый
-    //    • добавляем поле method: 'full' для совместимости
+    //  Воркер уже присылает правильный type ('tv' или 'movie').
+    //  Здесь мы его строго сохраняем — НЕ перезаписываем дефолтом 'movie'.
     // ================================================================
     function normalizeCard(item) {
         var img = buildImg(item);
         var bg  = buildBg(item);
 
-        // poster_path должен быть в формате /t/p/w500/xxx.jpg,
-        // чтобы Lampa смогла построить картинку через свой cdn-механизм.
-        // Если воркер вернул прямой URL (KP) — оставляем как есть.
         var posterPath = item.poster_path || '';
         if (posterPath &&
             !posterPath.startsWith('/t/p/') &&
@@ -81,6 +66,10 @@
 
         var title = item.title || item.name || '';
 
+        // ВАЖНО: type берём строго из воркера. Воркер знает категорию и
+        // правильно выставляет 'tv'/'movie'. Дефолт только если поле отсутствует.
+        var type = item.type || 'movie';
+
         return {
             // ── обязательные поля Lampa ────────────────────────────────
             id:               item.id,
@@ -89,11 +78,11 @@
             original_title:   item.original_title || title,
             overview:         item.overview       || '',
 
-            // ── постеры (все 4 поля присутствуют всегда) ──────────────
-            poster_path:      posterPath,     // /t/p/w500/xxx.jpg  (или прямой URL для KP)
-            backdrop_path:    backdropPath,   // /t/p/original/xxx.jpg
-            img:              img,            // https://image.tmdb.org/t/p/w500/xxx.jpg
-            background_image: bg,            // https://image.tmdb.org/t/p/original/xxx.jpg
+            // ── постеры ───────────────────────────────────────────────
+            poster_path:      posterPath,
+            backdrop_path:    backdropPath,
+            img:              img,
+            background_image: bg,
 
             // ── метаданные ────────────────────────────────────────────
             vote_average:      item.vote_average      || 0,
@@ -101,11 +90,12 @@
             first_air_date:    item.first_air_date     || '',
             number_of_seasons: item.number_of_seasons  || undefined,
 
-            type:             item.type             || 'movie',
-            release_quality:  item.release_quality  || '',   // "4K HDR", "WEB-DL 1080p" и т.д.
+            // КРИТИЧНО: сохраняем тип как есть — 'tv' или 'movie'
+            type:             type,
+            release_quality:  item.release_quality  || '',
             source:           SOURCE_NAME,
 
-            // ── промо (используется на карточке) ─────────────────────
+            // ── промо ─────────────────────────────────────────────────
             promo_title: item.promo_title || title,
             promo:       item.promo       || item.overview || '',
 
@@ -138,8 +128,6 @@
         };
 
         // ── поиск ───────────────────────────────────────────────────
-        // Поиск делегируется воркеру, который внутри ищет сначала в TMDB,
-        // затем в Kinopoisk. Плагин только нормализует ответ.
         self.search = function (params, onComplete, onError) {
             var query = (params.query || '').trim();
             if (!query) { onComplete({ results: [] }); return; }
@@ -166,7 +154,6 @@
             var total = CATEGORIES.length;
             var done  = 0;
 
-            // Загружаем все категории параллельно для скорости
             CATEGORIES.forEach(function (cat) {
                 var url = WORKER_URL + cat.url + '?page=1&page_size=20';
 
@@ -180,7 +167,6 @@
 
                     done++;
                     if (done === total) {
-                        // Возвращаем в исходном порядке категорий
                         rows.sort(function (a, b) {
                             var ia = CATEGORIES.findIndex(function (c) { return c.url === a.url; });
                             var ib = CATEGORIES.findIndex(function (c) { return c.url === b.url; });
@@ -216,27 +202,106 @@
         };
 
         // ── полная карточка ──────────────────────────────────────────
-        // Если есть числовой id — делегируем TMDB для получения деталей,
-        // иначе возвращаем данные как есть.
+        // ИСПРАВЛЕНИЕ: используем правильный тип при обращении к TMDB.
+        // Если item.type === 'tv' — вызываем TMDB как сериал, иначе как фильм.
+        // Это ключевое исправление: раньше всегда вызывался tmdb.full без учёта типа,
+        // поэтому сериалы открывались как фильмы.
         self.full = function (params, onSuccess, onError) {
-            if (params.id && typeof params.id === 'number' && params.id > 0) {
-                Lampa.Api.sources.tmdb.full(params, function (data) {
-                    // Дополняем ответ TMDB нашими прямыми URL, если TMDB не вернул
-                    if (!data.img && params.img)
-                        data.img = params.img;
-                    if (!data.background_image && params.background_image)
-                        data.background_image = params.background_image;
-                    // Сохраняем release_quality из оригинальных данных
-                    if (!data.release_quality && params.release_quality)
-                        data.release_quality = params.release_quality;
-                    onSuccess(data);
-                }, function () {
-                    // fallback — вернуть то, что уже есть
-                    onSuccess(params);
-                });
+            var itemId   = params.id;
+            var itemType = params.type || 'movie';
+
+            if (itemId && typeof itemId === 'number' && itemId > 0) {
+
+                if (itemType === 'tv') {
+                    // Для сериалов используем TMDB TV endpoint через sources.tmdb
+                    // Lampa.Api.sources.tmdb.full определяет тип по наличию поля type
+                    // Поэтому передаём params с type='tv' — Lampa сама выберет endpoint
+                    var tvParams = Object.assign({}, params, { type: 'tv' });
+
+                    Lampa.Api.sources.tmdb.full(tvParams, function (data) {
+                        if (!data.img && params.img)
+                            data.img = params.img;
+                        if (!data.background_image && params.background_image)
+                            data.background_image = params.background_image;
+                        if (!data.release_quality && params.release_quality)
+                            data.release_quality = params.release_quality;
+                        // Гарантируем что тип не потеряется после обогащения
+                        data.type = 'tv';
+                        onSuccess(data);
+                    }, function () {
+                        // Fallback: прямой запрос к TMDB TV API
+                        self._fetchTmdbTvDirect(params, onSuccess);
+                    });
+
+                } else {
+                    // Фильм — стандартное поведение
+                    Lampa.Api.sources.tmdb.full(params, function (data) {
+                        if (!data.img && params.img)
+                            data.img = params.img;
+                        if (!data.background_image && params.background_image)
+                            data.background_image = params.background_image;
+                        if (!data.release_quality && params.release_quality)
+                            data.release_quality = params.release_quality;
+                        data.type = 'movie';
+                        onSuccess(data);
+                    }, function () {
+                        onSuccess(params);
+                    });
+                }
+
             } else {
+                // Нет числового id — возвращаем как есть
                 onSuccess(params);
             }
+        };
+
+        // Прямой запрос к TMDB /tv/{id} — резервный путь для сериалов
+        self._fetchTmdbTvDirect = function (params, onSuccess) {
+            var tmdbKey = 'f348b4586d1791a40d99edd92164cb86';
+            var url = 'https://api.themoviedb.org/3/tv/' + params.id +
+                      '?api_key=' + tmdbKey + '&language=ru-RU' +
+                      '&append_to_response=external_ids,content_ratings,credits,videos';
+
+            self.network.silent(url, function (data) {
+                if (!data) { onSuccess(params); return; }
+
+                // Приводим к формату Lampa
+                var title = data.name || data.original_name || params.title || '';
+
+                var posterPath = data.poster_path
+                    ? '/t/p/w500' + data.poster_path
+                    : (params.poster_path || '');
+                var bgPath = data.backdrop_path
+                    ? '/t/p/original' + data.backdrop_path
+                    : (params.backdrop_path || '');
+                var imgFull = data.poster_path
+                    ? 'https://image.tmdb.org/t/p/w500' + data.poster_path
+                    : (params.img || '');
+                var bgFull = data.backdrop_path
+                    ? 'https://image.tmdb.org/t/p/original' + data.backdrop_path
+                    : (params.background_image || '');
+
+                var result = Object.assign({}, params, {
+                    id:               data.id || params.id,
+                    title:            title,
+                    name:             title,
+                    original_title:   data.original_name || params.original_title || title,
+                    overview:         data.overview || params.overview || '',
+                    poster_path:      posterPath,
+                    backdrop_path:    bgPath,
+                    img:              imgFull,
+                    background_image: bgFull,
+                    vote_average:     data.vote_average || params.vote_average || 0,
+                    first_air_date:   data.first_air_date || params.first_air_date || '',
+                    number_of_seasons: data.number_of_seasons || params.number_of_seasons,
+                    type:             'tv',
+                    method:           'full'
+                });
+
+                onSuccess(result);
+            }, function () {
+                onSuccess(params);
+            });
         };
     }
 
