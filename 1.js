@@ -27,14 +27,13 @@
 
     /**
      * Строим полный URL постера из того, что пришло с воркера.
-     * Воркер уже должен присылать img/background_image, но на случай
-     * если запущен старый воркер — восстанавливаем здесь.
+     * Воркер уже присылает img/background_image — восстанавливаем здесь
+     * на случай старого воркера или пустых полей.
      */
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
         if (item.poster_path) {
             if (item.poster_path.startsWith('http')) return item.poster_path;
-            // вид "/t/p/w500/xxx.jpg" или просто "/xxx.jpg"
             if (item.poster_path.startsWith('/t/p/')) return 'https://image.tmdb.org' + item.poster_path;
             return TMDB_IMG + item.poster_path;
         }
@@ -53,20 +52,30 @@
 
     // ================================================================
     //  НОРМАЛИЗАЦИЯ КАРТОЧКИ (то, что Lampa ждёт от источника)
+    //
+    //  Воркер уже присылает все нужные поля — здесь мы:
+    //    • гарантируем наличие каждого поля (даже если пустое)
+    //    • восстанавливаем img/bg если воркер старый
+    //    • добавляем поле method: 'full' для совместимости
     // ================================================================
     function normalizeCard(item) {
         var img = buildImg(item);
         var bg  = buildBg(item);
 
         // poster_path должен быть в формате /t/p/w500/xxx.jpg,
-        // чтобы Lampa смогла построить картинку через свой cdn-механизм
+        // чтобы Lampa смогла построить картинку через свой cdn-механизм.
+        // Если воркер вернул прямой URL (KP) — оставляем как есть.
         var posterPath = item.poster_path || '';
-        if (posterPath && !posterPath.startsWith('/t/p/') && !posterPath.startsWith('http')) {
+        if (posterPath &&
+            !posterPath.startsWith('/t/p/') &&
+            !posterPath.startsWith('http')) {
             posterPath = '/t/p/w500' + posterPath;
         }
 
         var backdropPath = item.backdrop_path || '';
-        if (backdropPath && !backdropPath.startsWith('/t/p/') && !backdropPath.startsWith('http')) {
+        if (backdropPath &&
+            !backdropPath.startsWith('/t/p/') &&
+            !backdropPath.startsWith('http')) {
             backdropPath = '/t/p/original' + backdropPath;
         }
 
@@ -76,29 +85,29 @@
             // ── обязательные поля Lampa ────────────────────────────────
             id:               item.id,
             title:            title,
-            name:             item.name  || title,
+            name:             item.name          || title,
             original_title:   item.original_title || title,
-            overview:         item.overview || '',
+            overview:         item.overview       || '',
 
-            // ── постеры ───────────────────────────────────────────────
-            poster_path:      posterPath,     // /t/p/w500/xxx.jpg
+            // ── постеры (все 4 поля присутствуют всегда) ──────────────
+            poster_path:      posterPath,     // /t/p/w500/xxx.jpg  (или прямой URL для KP)
             backdrop_path:    backdropPath,   // /t/p/original/xxx.jpg
             img:              img,            // https://image.tmdb.org/t/p/w500/xxx.jpg
             background_image: bg,            // https://image.tmdb.org/t/p/original/xxx.jpg
 
             // ── метаданные ────────────────────────────────────────────
-            vote_average:     item.vote_average || 0,
-            release_date:     item.release_date     || '',
-            first_air_date:   item.first_air_date   || '',
-            number_of_seasons: item.number_of_seasons || undefined,
+            vote_average:      item.vote_average      || 0,
+            release_date:      item.release_date       || '',
+            first_air_date:    item.first_air_date     || '',
+            number_of_seasons: item.number_of_seasons  || undefined,
 
-            type:             item.type || 'movie',
-            release_quality:  item.release_quality  || '',
+            type:             item.type             || 'movie',
+            release_quality:  item.release_quality  || '',   // "4K HDR", "WEB-DL 1080p" и т.д.
             source:           SOURCE_NAME,
 
             // ── промо (используется на карточке) ─────────────────────
-            promo_title: title,
-            promo:       item.overview || '',
+            promo_title: item.promo_title || title,
+            promo:       item.promo       || item.overview || '',
 
             // ── служебное ─────────────────────────────────────────────
             method: 'full'
@@ -129,6 +138,8 @@
         };
 
         // ── поиск ───────────────────────────────────────────────────
+        // Поиск делегируется воркеру, который внутри ищет сначала в TMDB,
+        // затем в Kinopoisk. Плагин только нормализует ответ.
         self.search = function (params, onComplete, onError) {
             var query = (params.query || '').trim();
             if (!query) { onComplete({ results: [] }); return; }
@@ -186,7 +197,7 @@
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
             var url = WORKER_URL + params.url +
-                      '?page=' + page +
+                      '?page='      + page +
                       '&page_size=' + pageSize;
 
             self.network.silent(
@@ -211,9 +222,13 @@
             if (params.id && typeof params.id === 'number' && params.id > 0) {
                 Lampa.Api.sources.tmdb.full(params, function (data) {
                     // Дополняем ответ TMDB нашими прямыми URL, если TMDB не вернул
-                    if (!data.img && params.img)              data.img              = params.img;
+                    if (!data.img && params.img)
+                        data.img = params.img;
                     if (!data.background_image && params.background_image)
                         data.background_image = params.background_image;
+                    // Сохраняем release_quality из оригинальных данных
+                    if (!data.release_quality && params.release_quality)
+                        data.release_quality = params.release_quality;
                     onSuccess(data);
                 }, function () {
                     // fallback — вернуть то, что уже есть
