@@ -201,39 +201,63 @@
         };
 
         // ================================================================
-        //  ПОЛНАЯ КАРТОЧКА (исправлено)
+        //  ПОЛНАЯ КАРТОЧКА (исправлено: fallback и обработка ошибок)
         // ================================================================
         self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
 
-            // Определяем метод точно как NUMParser
             var method = detectMediaMethod(card);
             params.method = method;
-            // Важно: обновляем метод и в самой карточке, если он используется внутри Lampa
             if (card && typeof card === 'object') {
                 card.method = method;
-                card.type   = method;   // на всякий случай синхронизируем и type
+                card.type   = method;
             }
 
-            // Сохраняем наши поля на случай если TMDB их не вернёт
             var savedImg     = params.img              || (card && card.img)              || '';
             var savedBg      = params.background_image || (card && card.background_image) || '';
             var savedQuality = params.release_quality  || (card && card.release_quality)  || '';
 
-            Lampa.Api.sources.tmdb.full(params, function (data) {
-                if (data && !data.img && savedImg)
-                    data.img = savedImg;
-                if (data && !data.background_image && savedBg)
-                    data.background_image = savedBg;
-                if (data && !data.release_quality && savedQuality)
-                    data.release_quality = savedQuality;
-                // Гарантируем правильный тип и метод
-                if (data) {
-                    data.type   = method;
-                    data.method = method;
+            // Функция для создания полной карточки из кэшированных данных, если TMDB не сработал
+            function fallbackFull(data) {
+                data = data || {};
+                if (!data.title) data.title = card.title || card.name || '';
+                if (!data.img && savedImg) data.img = savedImg;
+                if (!data.background_image && savedBg) data.background_image = savedBg;
+                if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
+                data.type   = method;
+                data.method = method;
+                // Копируем недостающие поля из исходной карточки
+                for (var k in card) {
+                    if (card.hasOwnProperty(k) && data[k] === undefined) {
+                        data[k] = card[k];
+                    }
                 }
                 onSuccess(data);
-            }, onError);
+            }
+
+            // Если ID не похож на настоящий TMDB ID (отрицательный, 0, слишком короткий),
+            // сразу отдаём то, что есть, не дёргая API.
+            if (!card.id || card.id <= 0 || String(card.id).length < 3) {
+                fallbackFull({});
+                return;
+            }
+
+            Lampa.Api.sources.tmdb.full(params, function (data) {
+                if (!data || !data.title) {
+                    // TMDB вернул пустой результат
+                    fallbackFull(data);
+                } else {
+                    if (!data.img && savedImg) data.img = savedImg;
+                    if (!data.background_image && savedBg) data.background_image = savedBg;
+                    if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
+                    data.type   = method;
+                    data.method = method;
+                    onSuccess(data);
+                }
+            }, function (err) {
+                console.warn('[RutorPro] TMDB full error:', err);
+                fallbackFull({});
+            });
         };
     }
 
