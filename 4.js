@@ -1,9 +1,10 @@
 (function () {
     'use strict';
 
-    var SOURCE_NAME = 'V10';
-    var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+    // ⚠️ ЗАМЕНИТЕ ЭТОТ URL НА АДРЕС ВАШЕГО WORKER'А В CLOUDFLARE ⚠️
+    var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
+    var SOURCE_NAME = 'V10';
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
@@ -13,12 +14,11 @@
         { title: 'Наши фильмы',          url: 'movies_ru'   },
         { title: 'Зарубежные сериалы',   url: 'tv_shows'    },
         { title: 'Русские сериалы',      url: 'tv_shows_ru' },
-        { title: 'Телевизор',            url: 'televizor'   }
+        { title: 'Телевизор',            url: 'televizor'   },
+        { title: 'Юмор',                 url: 'jumor'       }
     ];
 
-    // ================================================================
-    //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
-    // ================================================================
+    // ========== Утилиты для постеров ==========
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
         if (item.poster_path) {
@@ -39,44 +39,28 @@
         return '';
     }
 
-    // ================================================================
-    //  ОПРЕДЕЛЯЕМ ТИП КАРТОЧКИ — tv или movie
-    // ================================================================
     function detectMediaMethod(item) {
-        if (
-            item.type === 'tv' ||
-            item.number_of_seasons ||
-            item.seasons ||
-            item.first_air_date
-        ) {
+        if (item.type === 'tv' || item.number_of_seasons || item.seasons || item.first_air_date) {
             return 'tv';
         }
         return 'movie';
     }
 
-    // ================================================================
-    //  НОРМАЛИЗАЦИЯ КАРТОЧКИ
-    // ================================================================
     function normalizeCard(item) {
         var img = buildImg(item);
         var bg  = buildBg(item);
 
         var posterPath = item.poster_path || '';
-        if (posterPath &&
-            !posterPath.startsWith('/t/p/') &&
-            !posterPath.startsWith('http')) {
+        if (posterPath && !posterPath.startsWith('/t/p/') && !posterPath.startsWith('http')) {
             posterPath = '/t/p/w500' + posterPath;
         }
 
         var backdropPath = item.backdrop_path || '';
-        if (backdropPath &&
-            !backdropPath.startsWith('/t/p/') &&
-            !backdropPath.startsWith('http')) {
+        if (backdropPath && !backdropPath.startsWith('/t/p/') && !backdropPath.startsWith('http')) {
             backdropPath = '/t/p/original' + backdropPath;
         }
 
         var title = item.title || item.name || '';
-
         var type   = item.type || 'movie';
         var method = detectMediaMethod(item);
 
@@ -86,30 +70,24 @@
             name:             item.name           || title,
             original_title:   item.original_title  || title,
             overview:         item.overview        || '',
-
             poster_path:      posterPath,
             backdrop_path:    backdropPath,
             img:              img,
             background_image: bg,
-
             vote_average:      item.vote_average      || 0,
             release_date:      item.release_date       || '',
             first_air_date:    item.first_air_date     || '',
             number_of_seasons: item.number_of_seasons  || undefined,
-
             type:             type,
             method:           method,
             release_quality:  item.release_quality   || '',
             source:           SOURCE_NAME,
-
-            promo_title: item.promo_title || title,
-            promo:       item.promo       || item.overview || ''
+            promo_title:      item.promo_title || title,
+            promo:            item.promo       || item.overview || ''
         };
     }
 
-    // ================================================================
-    //  API SERVICE
-    // ================================================================
+    // ========== API Service ==========
     function RutorApiService() {
         var self    = this;
         self.network = new Lampa.Reguest();
@@ -202,7 +180,6 @@
 
         self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
-
             var method = detectMediaMethod(card);
             params.method = method;
             if (card && typeof card === 'object') {
@@ -253,9 +230,7 @@
         };
     }
 
-    // ================================================================
-    //  ПУНКТ МЕНЮ (иконка катаны + название V10)
-    // ================================================================
+    // ========== Пункт меню ==========
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
 
@@ -263,7 +238,7 @@
             '<li class="menu__item selector" data-action="v10">' +
             '<div class="menu__ico">' +
             '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor">' +
-            '<path d="M12 2L10 22H14L12 2Z M11 6H13V18H11V6Z"/>' +  // простая катана
+            '<path d="M12 2L10 22H14L12 2Z M11 6H13V18H11V6Z"/>' +
             '</svg>' +
             '</div>' +
             '<div class="menu__text">' + SOURCE_NAME + '</div>' +
@@ -284,9 +259,7 @@
         else $('.menu__list').append(item);
     }
 
-    // ================================================================
-    //  INIT
-    // ================================================================
+    // ========== Инициализация ==========
     function init() {
         if (window.v10_plugin_ready) return;
         window.v10_plugin_ready = true;
@@ -308,5 +281,4 @@
             if (e.type === 'ready') init();
         });
     }
-
 })();
