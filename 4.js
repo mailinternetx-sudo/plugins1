@@ -13,7 +13,9 @@
         { title: 'Наши фильмы',          url: 'movies_ru'   },
         { title: 'Зарубежные сериалы',   url: 'tv_shows'    },
         { title: 'Русские сериалы',      url: 'tv_shows_ru' },
-        { title: 'Телевизор',            url: 'televizor'   }
+        { title: 'Телевизор',            url: 'televizor'   },
+        // НОВОЕ: категория Юмор
+        { title: 'Юмор',                 url: 'humor'       }
     ];
 
     // ================================================================
@@ -167,6 +169,7 @@
 
                     done++;
                     if (done === total) {
+                        // Сохраняем порядок из массива CATEGORIES
                         rows.sort(function (a, b) {
                             var ia = CATEGORIES.findIndex(function (c) { return c.url === a.url; });
                             var ib = CATEGORIES.findIndex(function (c) { return c.url === b.url; });
@@ -254,7 +257,7 @@
     }
 
     // ================================================================
-    //  ПУНКТ МЕНЮ (красное пламя + V10)
+    //  ПУНКТ МЕНЮ (иконка катаны + название V10)
     // ================================================================
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
@@ -262,9 +265,8 @@
         var item = $(
             '<li class="menu__item selector" data-action="v10">' +
             '<div class="menu__ico">' +
-            '<svg height="36" viewBox="0 0 24 24" width="36">' +
-            '<path fill="#f44336" d="M12 2C10.5 5 8 8 8 12c0 2.5 1 5 3 6.5V22h2v-3.5c2-1.5 3-4 3-6.5 0-4-2.5-7-3.5-10z"/>' +
-            '<path fill="#ff5722" d="M12 2c-0.8 2-1.5 4-1.5 6 0 2 0.5 3.5 1.5 5 1-1.5 1.5-3 1.5-5 0-2-0.7-4-1.5-6z" opacity="0.7"/>' +
+            '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor">' +
+            '<path d="M12 2L10 22H14L12 2Z M11 6H13V18H11V6Z"/>' +
             '</svg>' +
             '</div>' +
             '<div class="menu__text">' + SOURCE_NAME + '</div>' +
