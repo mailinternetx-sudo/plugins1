@@ -7,6 +7,8 @@
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
+    // Список категорий — url передаётся воркеру как путь
+    // Воркер определяет категорию через функцию detect()
     var CATEGORIES = [
         { title: 'Топ 24 часа',          url: 'top24'       },
         { title: 'Зарубежные фильмы',    url: 'movies'      },
@@ -14,7 +16,6 @@
         { title: 'Зарубежные сериалы',   url: 'tv_shows'    },
         { title: 'Русские сериалы',      url: 'tv_shows_ru' },
         { title: 'Телевизор',            url: 'televizor'   },
-        // НОВОЕ: категория Юмор
         { title: 'Юмор',                 url: 'humor'       }
     ];
 
@@ -24,7 +25,7 @@
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
         if (item.poster_path) {
-            if (item.poster_path.startsWith('http')) return item.poster_path;
+            if (item.poster_path.startsWith('http'))  return item.poster_path;
             if (item.poster_path.startsWith('/t/p/')) return 'https://image.tmdb.org' + item.poster_path;
             return TMDB_IMG + item.poster_path;
         }
@@ -34,7 +35,7 @@
     function buildBg(item) {
         if (item.background_image && item.background_image.startsWith('http')) return item.background_image;
         if (item.backdrop_path) {
-            if (item.backdrop_path.startsWith('http')) return item.backdrop_path;
+            if (item.backdrop_path.startsWith('http'))  return item.backdrop_path;
             if (item.backdrop_path.startsWith('/t/p/')) return 'https://image.tmdb.org' + item.backdrop_path;
             return TMDB_BG + item.backdrop_path;
         }
@@ -46,9 +47,10 @@
     // ================================================================
     function detectMediaMethod(item) {
         if (
-            item.type === 'tv' ||
-            item.number_of_seasons ||
-            item.seasons ||
+            item.type === 'tv'        ||
+            item.method === 'tv'      ||
+            item.number_of_seasons    ||
+            item.seasons              ||
             item.first_air_date
         ) {
             return 'tv';
@@ -77,9 +79,8 @@
             backdropPath = '/t/p/original' + backdropPath;
         }
 
-        var title = item.title || item.name || '';
-
-        var type   = item.type || 'movie';
+        var title  = item.title || item.name || '';
+        var type   = item.type   || 'movie';
         var method = detectMediaMethod(item);
 
         return {
@@ -101,7 +102,7 @@
 
             type:             type,
             method:           method,
-            release_quality:  item.release_quality   || '',
+            release_quality:  item.release_quality    || '',
             source:           SOURCE_NAME,
 
             promo_title: item.promo_title || title,
@@ -113,9 +114,10 @@
     //  API SERVICE
     // ================================================================
     function RutorApiService() {
-        var self    = this;
+        var self     = this;
         self.network = new Lampa.Reguest();
 
+        // ---- Загрузка списка по URL ----
         self.fetch = function (url, onComplete, onError) {
             self.network.silent(
                 url,
@@ -131,6 +133,7 @@
             );
         };
 
+        // ---- Поиск ----
         self.search = function (params, onComplete, onError) {
             var query = (params.query || '').trim();
             if (!query) { onComplete({ results: [] }); return; }
@@ -151,6 +154,7 @@
             );
         };
 
+        // ---- Главный экран: все категории ----
         self.category = function (params, onSuccess, onError) {
             var rows  = [];
             var total = CATEGORIES.length;
@@ -181,6 +185,7 @@
             });
         };
 
+        // ---- Страница категории (пагинация) ----
         self.list = function (params, onComplete, onError) {
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
@@ -203,6 +208,7 @@
             );
         };
 
+        // ---- Полные данные карточки ----
         self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
 
@@ -220,7 +226,7 @@
             function fallbackFull(data) {
                 data = data || {};
                 if (!data.title) data.title = card.title || card.name || '';
-                if (!data.img && savedImg) data.img = savedImg;
+                if (!data.img && savedImg)             data.img              = savedImg;
                 if (!data.background_image && savedBg) data.background_image = savedBg;
                 if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
                 data.type   = method;
@@ -233,7 +239,8 @@
                 onSuccess(data);
             }
 
-            if (!card.id || card.id <= 0 || String(card.id).length < 3) {
+            // Если ID нет или слишком маленький — используем fallback
+            if (!card.id || card.id <= 0 || String(Math.abs(card.id)).length < 3) {
                 fallbackFull({});
                 return;
             }
@@ -242,7 +249,7 @@
                 if (!data || !data.title) {
                     fallbackFull(data);
                 } else {
-                    if (!data.img && savedImg) data.img = savedImg;
+                    if (!data.img && savedImg)             data.img              = savedImg;
                     if (!data.background_image && savedBg) data.background_image = savedBg;
                     if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
                     data.type   = method;
@@ -257,7 +264,7 @@
     }
 
     // ================================================================
-    //  ПУНКТ МЕНЮ (иконка катаны + название V10)
+    //  ПУНКТ МЕНЮ
     // ================================================================
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
