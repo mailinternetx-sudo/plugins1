@@ -9,8 +9,9 @@ televizor     → https://rutor.info/tv            (25 + плагины)
 humor         → https://rutor.info/jumor         (25 + плагины)
 top24         → https://rutor.info/new/          (блок секции)
 */
-const TMDB_KEY = 'f348b4586d1791a40d99edd92164cb86';
-const KP_KEY   = 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
+// ⚠️ API ключи должны передаваться через env (Cloudflare Workers)
+const TMDB_KEY = globalThis.TMDB_KEY || 'f348b4586d1791a40d99edd92164cb86';
+const KP_KEY   = globalThis.KP_KEY   || 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 const TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
@@ -159,7 +160,7 @@ async function fetchNumparserCategory(category, page, pageSize) {
     const text = await safeFetch(fetchUrl);
     const data = JSON.parse(text);
     
-    if (!data || !Array.isArray(data.results)) {
+    if (!data || !Array.isArray(data.results) || data.results.length === 0) {
         return { results: [], page, total_pages: 1, total_results: 0, page_size: pageSize };
     }
     
@@ -269,8 +270,9 @@ function parseTorrentRows(html, limit) {
         tableHtml = idxMatch[1];
     } else {
         const tables = [...html.matchAll(/<table[^>]*>([\s\S]*?)<\/table>/gi)];
-        if (tables.length) {
-            tableHtml = tables.reduce((a, b) => (a[1].length > b[1].length ? a : b))[1];
+        if (tables.length > 0) {
+            // ✅ FIX: Проверяем, что массив не пуст
+            tableHtml = tables.reduce((a, b) => (a[1]?.length || 0) > (b[1]?.length || 0) ? a : b)[1] || '';
         } else {
             tableHtml = html;
         }
@@ -326,6 +328,10 @@ async function safeFetch(url, opts = {}) {
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.text();
+    } catch (e) {
+        // ✅ FIX: Правильная обработка AbortError при timeout
+        if (e.name === 'AbortError') throw new Error(`Request timeout after ${opts.timeout || 8000}ms`);
+        throw e;
     } finally {
         clearTimeout(id);
     }
@@ -436,7 +442,8 @@ function parseTitle(raw, forceTv = false) {
         .filter(Boolean);
     
     const ru = cleaned[0] || raw.replace(/\s*[\[\(].*$/, '').trim();
-    const en = cleaned.length > 1 ? cleaned[1] : ru;
+    // ✅ FIX: Если нет второго названия, не копируем русское
+    const en = cleaned.length > 1 ? cleaned[1] : (ru !== cleaned[0] ? ru : '');
     
     return {
         mainTitle: en || ru,
@@ -567,12 +574,22 @@ function normalize(item, parsed, rawTitle, category) {
                   item.russianName ||
                   parsed.ruTitle   ||
                   parsed.mainTitle;
-                  
+    
+    // ✅ FIX: Правильная валидация vote_average с проверкой NaN
     let vote_average = 0;
-    if (item.vote_average)      vote_average = parseFloat(item.vote_average);
-    else if (item.rating?.kp)   vote_average = parseFloat(item.rating.kp);
-    else if (item.rating?.imdb) vote_average = parseFloat(item.rating.imdb);
-    else if (item.voteCount)    vote_average = parseFloat(item.voteCount) / 10;
+    if (item.vote_average !== undefined && item.vote_average !== null) {
+        const parsed_val = parseFloat(item.vote_average);
+        if (!isNaN(parsed_val)) vote_average = parsed_val;
+    } else if (item.rating?.kp) {
+        const parsed_val = parseFloat(item.rating.kp);
+        if (!isNaN(parsed_val)) vote_average = parsed_val;
+    } else if (item.rating?.imdb) {
+        const parsed_val = parseFloat(item.rating.imdb);
+        if (!isNaN(parsed_val)) vote_average = parsed_val;
+    } else if (item.voteCount) {
+        const parsed_val = parseFloat(item.voteCount) / 10;
+        if (!isNaN(parsed_val)) vote_average = parsed_val;
+    }
     
     const release_quality = detectQuality(rawTitle || parsed.raw || '');
     const releaseDate     = item.release_date   || (item.year ? `${item.year}-01-01` : '');
