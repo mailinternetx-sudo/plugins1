@@ -46,8 +46,8 @@ function buildBg(item) {
 function detectMediaMethod(item) {
     if (
         item.type === 'tv' ||
-        item.number_of_seasons ||
-        item.seasons ||
+        (item.number_of_seasons && item.number_of_seasons > 0) ||
+        (item.seasons && Array.isArray(item.seasons) && item.seasons.length > 0) ||
         item.first_air_date ||
         item.media_type === 'tv'
     ) {
@@ -159,6 +159,12 @@ function normalizeCard(item, category) {
 //  API SERVICE
 // ================================================================
 function RutorApiService() {
+    // ✅ Проверка наличия Lampa перед инициализацией
+    if (!window.Lampa) {
+        console.error('[V10] Lampa не загружена');
+        return;
+    }
+
     var self    = this;
     self.network = new Lampa.Reguest();
 
@@ -206,7 +212,7 @@ function RutorApiService() {
     self.category = function (params, onSuccess, onError) {
         var rows  = [];
         var total = CATEGORIES.length;
-        var done  = 0;
+        var completed  = 0;
 
         CATEGORIES.forEach(function (cat) {
             var url = WORKER_URL + cat.url + '?page=1&page_size=25';
@@ -230,8 +236,8 @@ function RutorApiService() {
                 source:  SOURCE_NAME
             });
 
-            done++;
-            if (done === total) {
+            completed++;
+            if (completed === total) {
                 rows.sort(function (a, b) {
                     var ia = CATEGORIES.findIndex(function (c) { return c.url === a.url; });
                     var ib = CATEGORIES.findIndex(function (c) { return c.url === b.url; });
@@ -349,14 +355,16 @@ function RutorApiService() {
             onSuccess(data);
         }
 
-        if (!card.id || card.id <= 0 || String(card.id).length < 3) {
+        // ✅ Убрана строгая проверка длины ID
+        if (!card.id || card.id <= 0) {
             fallbackFull({});
             return;
         }
 
         Lampa.Api.sources.tmdb.full(params, function (data) {
             if (!data || !data.title) {
-                fallbackFull(data);
+                // ✅ Передаём пустой объект вместо data
+                fallbackFull({});
             } else {
                 if (!data.img && savedImg) data.img = savedImg;
                 if (!data.background_image && savedBg) data.background_image = savedBg;
