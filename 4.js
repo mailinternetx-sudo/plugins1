@@ -1,442 +1,513 @@
 (function () {
-'use strict';
-var SOURCE_NAME = 'V10';
-var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+    'use strict';
 
-var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
-var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
+    var SOURCE_NAME = 'V10';
+    var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
-// 🎬 Категории с точными URL для парсинга
-var CATEGORIES = [
-    { title: 'Топ 24 часа',          url: 'top24'       },
-    { title: 'Зарубежные фильмы',    url: 'kino'        },
-    { title: 'Наши фильмы',          url: 'nashe_kino'  },
-    { title: 'Зарубежные сериалы',   url: 'seriali'     },
-    { title: 'Русские сериалы',      url: 'nashi_seriali' },
-    { title: 'Телевизор',            url: 'televizor'   },
-    { title: 'Юмор',                 url: 'humor'       }
-];
+    var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
+    var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
-// ================================================================
-//  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
-// ================================================================
-function buildImg(item) {
-    if (item.img && item.img.startsWith('http')) return item.img;
-    if (item.poster_path) {
-        if (item.poster_path.startsWith('http')) return item.poster_path;
-        if (item.poster_path.startsWith('/t/p/')) return 'https://image.tmdb.org' + item.poster_path;
-        return TMDB_IMG + item.poster_path;
-    }
-    return '';
-}
+    var CATEGORIES = [
+        { title: 'Топ 24 часа',          url: 'top24'       },
+        { title: 'Зарубежные фильмы',    url: 'movies'      },
+        { title: 'Наши фильмы',          url: 'movies_ru'   },
+        { title: 'Зарубежные сериалы',   url: 'tv_shows'    },
+        { title: 'Русские сериалы',      url: 'tv_shows_ru' },
+        { title: 'Телевизор',            url: 'televizor'   },
+        { title: 'Юмор',                 url: 'humor'       }
+    ];
 
-function buildBg(item) {
-    if (item.background_image && item.background_image.startsWith('http')) return item.background_image;
-    if (item.backdrop_path) {
-        if (item.backdrop_path.startsWith('http')) return item.backdrop_path;
-        if (item.backdrop_path.startsWith('/t/p/')) return 'https://image.tmdb.org' + item.backdrop_path;
-        return TMDB_BG + item.backdrop_path;
-    }
-    return '';
-}
+    function buildImg(item) {
 
-// ================================================================
-//  ОПРЕДЕЛЯЕМ ТИП КАРТОЧКИ — tv или movie
-// ================================================================
-function detectMediaMethod(item) {
-    if (
-        item.type === 'tv' ||
-        (item.number_of_seasons && item.number_of_seasons > 0) ||
-        (item.seasons && Array.isArray(item.seasons) && item.seasons.length > 0) ||
-        item.first_air_date ||
-        item.media_type === 'tv'
-    ) {
-        return 'tv';
-    }
-    return 'movie';
-}
-
-// ================================================================
-//  ОПРЕДЕЛЕНИЕ ЯЗЫКА И СТРАНЫ
-// ================================================================
-function detectLanguageAndCountry(title, category) {
-    var ruCategories = ['nashe_kino', 'nashi_seriali'];
-    if (ruCategories.indexOf(category) !== -1) {
-        return { original_language: 'ru', origin_country: ['RU'] };
-    }
-    
-    if (category === 'televizor' || category === 'humor') {
-        if (/[а-яА-ЯёЁ]/.test(title)) {
-            return { original_language: 'ru', origin_country: ['RU'] };
+        if (item.img && item.img.startsWith('http')) {
+            return item.img;
         }
-        return { original_language: 'en', origin_country: ['US'] };
-    }
-    
-    if (/[а-яА-ЯёЁ]/.test(title)) {
-        return { original_language: 'ru', origin_country: ['RU'] };
-    }
-    return { original_language: 'en', origin_country: ['US'] };
-}
 
-// ================================================================
-//  НОРМАЛИЗАЦИЯ КАРТОЧКИ — ✅ с валидацией vote и новыми полями
-// ================================================================
-function normalizeCard(item, category) {
-    var img = buildImg(item);
-    var bg  = buildBg(item);
+        if (item.poster_path) {
 
-    var posterPath = item.poster_path || '';
-    if (posterPath &&
-        !posterPath.startsWith('/t/p/') &&
-        !posterPath.startsWith('http')) {
-        posterPath = '/t/p/w500' + posterPath;
-    }
-
-    var backdropPath = item.backdrop_path || '';
-    if (backdropPath &&
-        !backdropPath.startsWith('/t/p/') &&
-        !backdropPath.startsWith('http')) {
-        backdropPath = '/t/p/original' + backdropPath;
-    }
-
-    var title = item.title || item.name || '';
-    var langData = detectLanguageAndCountry(title, category);
-
-    // ✅ Валидация vote_average с защитой от NaN
-    var vote_average = 0;
-    if (item.vote_average !== undefined && item.vote_average !== null) {
-        var parsed = parseFloat(item.vote_average);
-        if (!isNaN(parsed)) vote_average = parsed;
-    } else if (item.rating && item.rating.kp) {
-        var parsedKp = parseFloat(item.rating.kp);
-        if (!isNaN(parsedKp)) vote_average = parsedKp;
-    } else if (item.rating && item.rating.imdb) {
-        var parsedImdb = parseFloat(item.rating.imdb);
-        if (!isNaN(parsedImdb)) vote_average = parsedImdb;
-    } else if (item.voteCount) {
-        var parsedCount = parseFloat(item.voteCount) / 10;
-        if (!isNaN(parsedCount)) vote_average = parsedCount;
-    }
-
-    var type   = item.type || 'movie';
-    var method = detectMediaMethod(item);
-
-    return {
-        id:                   item.id,
-        title:                title,
-        name:                 item.name            || title,
-        original_title:       item.original_title  || title,
-        original_name:        item.original_name   || title,
-        overview:             item.overview        || '',
-
-        poster_path:          posterPath,
-        backdrop_path:        backdropPath,
-        img:                  img,
-        background_image:     bg,
-
-        vote_average:         vote_average,
-        vote_count:           item.vote_count        || 0,
-        release_date:         item.release_date      || '',
-        first_air_date:       item.first_air_date    || '',
-        number_of_seasons:    item.number_of_seasons || undefined,
-
-        type:                 type,
-        method:               method,
-        media_type:           method,
-        release_quality:      item.release_quality   || '',
-        source:               SOURCE_NAME,
-
-        // 🌍 Новые поля для фильтрации
-        original_language:    item.original_language || langData.original_language,
-        origin_country:       item.origin_country    || langData.origin_country,
-
-        promo_title:          item.promo_title || title,
-        promo:                item.promo       || item.overview || ''
-    };
-}
-
-// ================================================================
-//  API SERVICE
-// ================================================================
-function RutorApiService() {
-    // ✅ Проверка наличия Lampa перед инициализацией
-    if (!window.Lampa) {
-        console.error('[V10] Lampa не загружена');
-        return;
-    }
-
-    var self    = this;
-    self.network = new Lampa.Reguest();
-
-    self.fetch = function (url, onComplete, onError) {
-        self.network.silent(
-            url,
-            function (json) {
-                if (!json || !json.results) { onComplete([]); return; }
-                var category = url.match(/\/([^\/\?]+)(?:\?|$)/);
-                var catName = category ? category[1] : '';
-                onComplete(json.results.map(function(item) { 
-                    return normalizeCard(item, catName); 
-                }));
-            },
-            function (err) {
-                console.warn('[V10] fetch error:', url, err);
-                if (onError) onError(err);
-                else onComplete([]);
+            if (item.poster_path.startsWith('http')) {
+                return item.poster_path;
             }
-        );
-    };
 
-    self.search = function (params, onComplete, onError) {
-        var query = (params.query || '').trim();
-        if (!query) { onComplete({ results: [] }); return; }
+            if (item.poster_path.startsWith('/t/p/')) {
+                return 'https://image.tmdb.org' + item.poster_path;
+            }
 
-        var url = WORKER_URL + 'search?query=' + encodeURIComponent(query);
+            return TMDB_IMG + item.poster_path;
+        }
 
-        self.network.silent(
-            url,
-            function (json) {
-                if (!json || !json.results) { onComplete({ results: [] }); return; }
+        return '';
+    }
+
+    function buildBg(item) {
+
+        if (
+            item.background_image &&
+            item.background_image.startsWith('http')
+        ) {
+            return item.background_image;
+        }
+
+        if (item.backdrop_path) {
+
+            if (item.backdrop_path.startsWith('http')) {
+                return item.backdrop_path;
+            }
+
+            if (item.backdrop_path.startsWith('/t/p/')) {
+                return 'https://image.tmdb.org' + item.backdrop_path;
+            }
+
+            return TMDB_BG + item.backdrop_path;
+        }
+
+        return '';
+    }
+
+    function detectMediaMethod(item) {
+
+        if (
+            item.type === 'tv' ||
+            item.number_of_seasons ||
+            item.seasons ||
+            item.first_air_date
+        ) {
+            return 'tv';
+        }
+
+        return 'movie';
+    }
+
+    function normalizeCard(item) {
+
+        var img = buildImg(item);
+        var bg  = buildBg(item);
+
+        var posterPath = item.poster_path || '';
+
+        if (
+            posterPath &&
+            !posterPath.startsWith('/t/p/') &&
+            !posterPath.startsWith('http')
+        ) {
+            posterPath = '/t/p/w500' + posterPath;
+        }
+
+        var backdropPath = item.backdrop_path || '';
+
+        if (
+            backdropPath &&
+            !backdropPath.startsWith('/t/p/') &&
+            !backdropPath.startsWith('http')
+        ) {
+            backdropPath = '/t/p/original' + backdropPath;
+        }
+
+        var title = item.title || item.name || '';
+
+        var type   = item.type || 'movie';
+        var method = detectMediaMethod(item);
+
+        return {
+
+            id: item.id,
+
+            title: title,
+            name: item.name || title,
+            original_title: item.original_title || title,
+
+            overview: item.overview || '',
+
+            poster_path: posterPath,
+            backdrop_path: backdropPath,
+
+            img: img,
+            background_image: bg,
+
+            vote_average: item.vote_average || 0,
+
+            release_date: item.release_date || '',
+            first_air_date: item.first_air_date || '',
+
+            number_of_seasons:
+                item.number_of_seasons || undefined,
+
+            origin_country:
+                item.origin_country || [''],
+
+            original_language:
+                item.original_language || '',
+
+            type: type,
+            method: method,
+
+            release_quality:
+                item.release_quality || '',
+
+            source: SOURCE_NAME,
+
+            promo_title:
+                item.promo_title || title,
+
+            promo:
+                item.promo || item.overview || ''
+        };
+    }
+
+    function RutorApiService() {
+
+        var self = this;
+
+        self.network = new Lampa.Reguest();
+
+        self.fetch = function (url, onComplete, onError) {
+
+            self.network.silent(
+                url,
+
+                function (json) {
+
+                    if (!json || !json.results) {
+                        onComplete([]);
+                        return;
+                    }
+
+                    onComplete(
+                        json.results.map(normalizeCard)
+                    );
+                },
+
+                function (err) {
+
+                    console.warn(
+                        '[V10] fetch error:',
+                        url,
+                        err
+                    );
+
+                    if (onError) onError(err);
+                    else onComplete([]);
+                }
+            );
+        };
+
+        self.search = function (
+            params,
+            onComplete
+        ) {
+
+            var query =
+                (params.query || '').trim();
+
+            if (!query) {
+
                 onComplete({
-                    results:      json.results.map(function(item) { 
-                        return normalizeCard(item, ''); 
-                    }),
-                    page:         json.page        || 1,
-                    total_pages:  json.total_pages || 1
+                    results: []
                 });
-            },
-            function () { onComplete({ results: [] }); }
-        );
-    };
 
-    self.category = function (params, onSuccess, onError) {
-        var rows  = [];
-        var total = CATEGORIES.length;
-        var completed  = 0;
+                return;
+            }
 
-        CATEGORIES.forEach(function (cat) {
-            var url = WORKER_URL + cat.url + '?page=1&page_size=25';
+            var url =
+                WORKER_URL +
+                'search?query=' +
+                encodeURIComponent(query);
 
-            self.fetch(url, function (items) {
-                if (cat.url === 'televizor' || cat.url === 'humor') {
-                    mergeWithPlugins(items, cat.url, function(merged) {
-                        pushRow(cat, merged);
+            self.network.silent(
+                url,
+
+                function (json) {
+
+                    if (!json || !json.results) {
+
+                        onComplete({
+                            results: []
+                        });
+
+                        return;
+                    }
+
+                    onComplete({
+
+                        results:
+                            json.results.map(normalizeCard),
+
+                        page:
+                            json.page || 1,
+
+                        total_pages:
+                            json.total_pages || 1
                     });
-                } else {
-                    pushRow(cat, items);
+                },
+
+                function () {
+
+                    onComplete({
+                        results: []
+                    });
                 }
-            });
-        });
+            );
+        };
 
-        function pushRow(cat, items) {
-            rows.push({
-                title:   cat.title,
-                results: items,
-                url:     cat.url,
-                source:  SOURCE_NAME
-            });
+        self.category = function (
+            params,
+            onSuccess
+        ) {
 
-            completed++;
-            if (completed === total) {
-                rows.sort(function (a, b) {
-                    var ia = CATEGORIES.findIndex(function (c) { return c.url === a.url; });
-                    var ib = CATEGORIES.findIndex(function (c) { return c.url === b.url; });
-                    return ia - ib;
+            var rows  = [];
+            var total = CATEGORIES.length;
+            var done  = 0;
+
+            CATEGORIES.forEach(function (cat) {
+
+                var url =
+                    WORKER_URL +
+                    cat.url +
+                    '?page=1&page_size=25';
+
+                self.fetch(url, function (items) {
+
+                    rows.push({
+
+                        title:
+                            cat.title,
+
+                        results:
+                            items,
+
+                        url:
+                            cat.url,
+
+                        source:
+                            SOURCE_NAME
+                    });
+
+                    done++;
+
+                    if (done === total) {
+
+                        rows.sort(function (a, b) {
+
+                            var ia =
+                                CATEGORIES.findIndex(function (c) {
+                                    return c.url === a.url;
+                                });
+
+                            var ib =
+                                CATEGORIES.findIndex(function (c) {
+                                    return c.url === b.url;
+                                });
+
+                            return ia - ib;
+                        });
+
+                        onSuccess(rows);
+                    }
                 });
-                onSuccess(rows);
-            }
-        }
-    };
-
-    // 🔄 Объединение с данными из плагинов
-    function mergeWithPlugins(items, category, callback) {
-        var pluginItems = [];
-        
-        if (window.Lampa && Lampa.Plugin && Lampa.Plugin.kinopub) {
-            try {
-                var kinopubData = Lampa.Plugin.kinopub.getCategory(category);
-                if (kinopubData && Array.isArray(kinopubData)) {
-                    pluginItems = pluginItems.concat(kinopubData.slice(0, 10));
-                }
-            } catch(e) { console.warn('[V10] kinopub error:', e); }
-        }
-        
-        if (window.Lampa && Lampa.EPG) {
-            try {
-                var epgData = Lampa.EPG.getProgram(category === 'televizor' ? 'tv' : 'entertainment');
-                if (epgData && Array.isArray(epgData)) {
-                    pluginItems = pluginItems.concat(epgData.slice(0, 10));
-                }
-            } catch(e) { console.warn('[V10] epg error:', e); }
-        }
-        
-        var merged = items.slice(0, 15);
-        pluginItems.forEach(function(pItem) {
-            if (merged.length >= 25) return;
-            var exists = merged.some(function(mItem) {
-                return mItem.title === pItem.title || mItem.name === pItem.title;
             });
-            if (!exists) {
-                merged.push(normalizeCard(Object.assign({
-                    id: pItem.id || ('plugin_' + Date.now() + Math.random()),
-                    title: pItem.title || pItem.name || '',
-                    name: pItem.name || pItem.title || '',
-                    overview: pItem.description || pItem.overview || '',
-                    poster_path: pItem.poster || pItem.img || '',
-                    backdrop_path: pItem.backdrop || '',
-                    first_air_date: pItem.date || pItem.premiere || '',
-                    type: category === 'televizor' ? 'tv' : 'movie'
-                }, pItem), category));
-            }
-        });
-        
-        callback(merged.slice(0, 25));
-    }
+        };
 
-    self.list = function (params, onComplete, onError) {
-        var page     = params.page     || 1;
-        var pageSize = Math.min(params.page_size || 25, 25);
-        var url = WORKER_URL + params.url +
-                  '?page='      + page +
-                  '&page_size=' + pageSize;
+        self.list = function (
+            params,
+            onComplete
+        ) {
 
-        self.network.silent(
-            url,
-            function (json) {
-                if (!json || !json.results) { onComplete({ results: [] }); return; }
-                var category = params.url || '';
-                onComplete({
-                    results:       json.results.map(function(item) { 
-                        return normalizeCard(item, category); 
-                    }),
-                    page:          json.page          || page,
-                    total_pages:   json.total_pages   || 1,
-                    total_results: json.total_results || json.results.length
-                });
-            },
-            function () { onComplete({ results: [] }); }
-        );
-    };
+            var page =
+                params.page || 1;
 
-    self.full = function (params, onSuccess, onError) {
-        var card = params.card || params;
-        var method = detectMediaMethod(card);
-        params.method = method;
-        if (card && typeof card === 'object') {
-            card.method = method;
-            card.type   = method;
-            card.media_type = method;
-        }
+            var pageSize =
+                params.page_size || 25;
 
-        var savedImg     = params.img              || (card && card.img)              || '';
-        var savedBg      = params.background_image || (card && card.background_image) || '';
-        var savedQuality = params.release_quality  || (card && card.release_quality)  || '';
-        var savedLang    = card.original_language  || '';
-        var savedCountry = card.origin_country     || [];
+            var url =
+                WORKER_URL +
+                params.url +
+                '?page=' + page +
+                '&page_size=' + pageSize;
 
-        function fallbackFull(data) {
-            data = data || {};
-            if (!data.title) data.title = card.title || card.name || '';
-            if (!data.img && savedImg) data.img = savedImg;
-            if (!data.background_image && savedBg) data.background_image = savedBg;
-            if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
-            if (!data.original_language && savedLang) data.original_language = savedLang;
-            if (!data.origin_country && savedCountry.length) data.origin_country = savedCountry;
-            
-            data.type = method;
-            data.method = method;
-            data.media_type = method;
-            
-            for (var k in card) {
-                if (card.hasOwnProperty(k) && data[k] === undefined) {
-                    data[k] = card[k];
+            self.network.silent(
+                url,
+
+                function (json) {
+
+                    if (!json || !json.results) {
+
+                        onComplete({
+                            results: []
+                        });
+
+                        return;
+                    }
+
+                    onComplete({
+
+                        results:
+                            json.results.map(normalizeCard),
+
+                        page:
+                            json.page || page,
+
+                        total_pages:
+                            json.total_pages || 1,
+
+                        total_results:
+                            json.total_results ||
+                            json.results.length
+                    });
+                },
+
+                function () {
+
+                    onComplete({
+                        results: []
+                    });
                 }
+            );
+        };
+
+        self.full = function (
+            params,
+            onSuccess
+        ) {
+
+            var card =
+                params.card || params;
+
+            var method =
+                detectMediaMethod(card);
+
+            params.method = method;
+
+            if (
+                card &&
+                typeof card === 'object'
+            ) {
+
+                card.method = method;
+                card.type   = method;
             }
-            onSuccess(data);
-        }
 
-        // ✅ Убрана строгая проверка длины ID
-        if (!card.id || card.id <= 0) {
-            fallbackFull({});
-            return;
-        }
+            var savedImg =
+                params.img ||
+                (card && card.img) ||
+                '';
 
-        Lampa.Api.sources.tmdb.full(params, function (data) {
-            if (!data || !data.title) {
-                // ✅ Передаём пустой объект вместо data
-                fallbackFull({});
-            } else {
-                if (!data.img && savedImg) data.img = savedImg;
-                if (!data.background_image && savedBg) data.background_image = savedBg;
-                if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
-                if (savedLang) data.original_language = savedLang;
-                if (savedCountry.length) data.origin_country = savedCountry;
-                
-                data.type = method;
+            var savedBg =
+                params.background_image ||
+                (card && card.background_image) ||
+                '';
+
+            var savedQuality =
+                params.release_quality ||
+                (card && card.release_quality) ||
+                '';
+
+            function fallbackFull(data) {
+
+                data = data || {};
+
+                if (!data.title) {
+                    data.title =
+                        card.title ||
+                        card.name ||
+                        '';
+                }
+
+                if (!data.img && savedImg) {
+                    data.img = savedImg;
+                }
+
+                if (
+                    !data.background_image &&
+                    savedBg
+                ) {
+                    data.background_image = savedBg;
+                }
+
+                if (
+                    !data.release_quality &&
+                    savedQuality
+                ) {
+                    data.release_quality = savedQuality;
+                }
+
+                data.type   = method;
                 data.method = method;
-                data.media_type = method;
+
+                data.origin_country =
+                    data.origin_country || [''];
+
+                data.original_language =
+                    data.original_language || '';
+
+                for (var k in card) {
+
+                    if (
+                        card.hasOwnProperty(k) &&
+                        data[k] === undefined
+                    ) {
+                        data[k] = card[k];
+                    }
+                }
+
                 onSuccess(data);
             }
-        }, function (err) {
-            console.warn('[V10] TMDB full error:', err);
-            fallbackFull({});
-        });
-    };
-}
 
-// ================================================================
-//  ПУНКТ МЕНЮ
-// ================================================================
-function addMenuItem() {
-    if ($('.menu__item[data-action="v10"]').length) return;
+            if (
+                !card.id ||
+                card.id <= 0 ||
+                String(card.id).length < 3
+            ) {
 
-    var item = $(
-        '<li class="menu__item selector" data-action="v10">' +
-        '<div class="menu__ico">' +
-        '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor">' +
-        '<path d="M12 2L10 22H14L12 2Z M11 6H13V18H11V6Z"/>' +
-        '</svg>' +
-        '</div>' +
-        '<div class="menu__text">' + SOURCE_NAME + '</div>' +
-        '</li>'
-    );
+                fallbackFull({});
+                return;
+            }
 
-    item.on('hover:enter', function () {
-        Lampa.Activity.push({
-            title:     SOURCE_NAME,
-            component: 'category',
-            source:    SOURCE_NAME,
-            method:    'category'
-        });
-    });
+            Lampa.Api.sources.tmdb.full(
 
-    var $after = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').first().parent();
-    if ($after.length) $after.after(item);
-    else $('.menu__list').append(item);
-}
+                params,
 
-// ================================================================
-//   INIT
-// ================================================================
-function init() {
-    if (window.v10_plugin_ready) return;
-    window.v10_plugin_ready = true;
+                function (data) {
 
-    Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
+                    if (!data || !data.title) {
 
-    Lampa.Listener.follow('app', function (e) {
-        if (e.type === 'ready' || e.type === 'render') {
-            setTimeout(addMenuItem, 1000);
-        }
-    });
+                        fallbackFull(data);
+                    }
+                    else {
 
-    setTimeout(addMenuItem, 2000);
-}
+                        if (!data.img && savedImg) {
+                            data.img = savedImg;
+                        }
 
-if (window.appready) init();
-else {
-    Lampa.Listener.follow('app', function (e) {
-        if (e.type === 'ready') init();
-    });
-}
-})();
+                        if (
+                            !data.background_image &&
+                            savedBg
+                        ) {
+                            data.background_image = savedBg;
+                        }
+
+                        if (
+                            !data.release_quality &&
+                            savedQuality
+                        ) {
+                            data.release_quality = savedQuality;
+                        }
+
+                        data.type   = method;
+                        data.method = method;
+
+                        data.origin_country =
+                            data.origin_country || [''];
+
+                        data.original_language =
+                            data.original_language || '';
+
+                        onSuccess(data);
+                    }
+                },
+
+                function () {
+                    fallbackFull({});
+                }
+            );
+        };
+    }
