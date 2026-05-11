@@ -1,8 +1,8 @@
 (function () {
     'use strict';
 
-    // ⚠️ ЗАМЕНИТЕ ЭТОТ URL НА АДРЕС ВАШЕГО WORKER'А В CLOUDFLARE ⚠️
-    var WORKER_URL = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+    // ⚠️ ЗАМЕНИТЕ НА АДРЕС ВАШЕГО WORKER'А ⚠️
+    var WORKER_URL = 'https://rutor-proxy.your-name.workers.dev/';
 
     var SOURCE_NAME = 'V10';
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
@@ -17,6 +17,10 @@
         { title: 'Телевизор',            url: 'televizor'   },
         { title: 'Юмор',                 url: 'jumor'       }
     ];
+
+    // ... (остальной код без изменений, как в предыдущем ответе)
+    // Полный код клиентской части взят из предыдущего сообщения.
+})();
 
     // ========== Утилиты для постеров ==========
     function buildImg(item) {
