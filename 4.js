@@ -1,28 +1,28 @@
 (function () {
     'use strict';
 
-    // ⚠️ ЗАМЕНИТЕ НА АДРЕС ВАШЕГО WORKER'А ⚠️
-    var WORKER_URL = 'https://rutor-proxy.your-name.workers.dev/';
-
     var SOURCE_NAME = 'V10';
+    var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/';
+
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
+    // ================================================================
+    //  КАТЕГОРИИ (порядок отображения в меню)
+    // ================================================================
     var CATEGORIES = [
-        { title: 'Топ 24 часа',          url: 'top24'       },
-        { title: 'Зарубежные фильмы',    url: 'movies'      },
-        { title: 'Наши фильмы',          url: 'movies_ru'   },
-        { title: 'Зарубежные сериалы',   url: 'tv_shows'    },
-        { title: 'Русские сериалы',      url: 'tv_shows_ru' },
-        { title: 'Телевизор',            url: 'televizor'   },
-        { title: 'Юмор',                 url: 'jumor'       }
+        { title: 'Топ 24 часа',          url: 'top24',         method: 'movie' },
+        { title: 'Зарубежные фильмы',    url: 'movies',        method: 'movie' },
+        { title: 'Наши фильмы',          url: 'movies_ru',     method: 'movie' },
+        { title: 'Зарубежные сериалы',   url: 'tv_shows',      method: 'tv'    },
+        { title: 'Русские сериалы',      url: 'tv_shows_ru',   method: 'tv'    },
+        { title: 'Телевизор',            url: 'televizor',     method: 'tv'    },
+        { title: 'Юмор',                 url: 'humor',         method: 'tv'    }
     ];
 
-    // ... (остальной код без изменений, как в предыдущем ответе)
-    // Полный код клиентской части взят из предыдущего сообщения.
-})();
-
-    // ========== Утилиты для постеров ==========
+    // ================================================================
+    //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
+    // ================================================================
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
         if (item.poster_path) {
@@ -43,30 +43,45 @@
         return '';
     }
 
+    // ================================================================
+    //  ОПРЕДЕЛЯЕМ ТИП КАРТОЧКИ — tv или movie
+    // ================================================================
     function detectMediaMethod(item) {
-        if (item.type === 'tv' || item.number_of_seasons || item.seasons || item.first_air_date) {
+        if (
+            item.method === 'tv' ||
+            item.type   === 'tv' ||
+            item.number_of_seasons ||
+            item.seasons ||
+            item.first_air_date
+        ) {
             return 'tv';
         }
         return 'movie';
     }
 
+    // ================================================================
+    //  НОРМАЛИЗАЦИЯ КАРТОЧКИ
+    // ================================================================
     function normalizeCard(item) {
         var img = buildImg(item);
         var bg  = buildBg(item);
 
         var posterPath = item.poster_path || '';
-        if (posterPath && !posterPath.startsWith('/t/p/') && !posterPath.startsWith('http')) {
+        if (posterPath &&
+            !posterPath.startsWith('/t/p/') &&
+            !posterPath.startsWith('http')) {
             posterPath = '/t/p/w500' + posterPath;
         }
 
         var backdropPath = item.backdrop_path || '';
-        if (backdropPath && !backdropPath.startsWith('/t/p/') && !backdropPath.startsWith('http')) {
+        if (backdropPath &&
+            !backdropPath.startsWith('/t/p/') &&
+            !backdropPath.startsWith('http')) {
             backdropPath = '/t/p/original' + backdropPath;
         }
 
-        var title = item.title || item.name || '';
-        var type   = item.type || 'movie';
-        var method = detectMediaMethod(item);
+        var title  = item.title || item.name || '';
+        var method = item.method || detectMediaMethod(item);
 
         return {
             id:               item.id,
@@ -74,43 +89,56 @@
             name:             item.name           || title,
             original_title:   item.original_title  || title,
             overview:         item.overview        || '',
+
             poster_path:      posterPath,
             backdrop_path:    backdropPath,
             img:              img,
             background_image: bg,
+
             vote_average:      item.vote_average      || 0,
             release_date:      item.release_date       || '',
             first_air_date:    item.first_air_date     || '',
             number_of_seasons: item.number_of_seasons  || undefined,
-            type:             type,
+
+            type:             method,
             method:           method,
             release_quality:  item.release_quality   || '',
             source:           SOURCE_NAME,
-            promo_title:      item.promo_title || title,
-            promo:            item.promo       || item.overview || ''
+
+            promo_title: item.promo_title || title,
+            promo:       item.promo       || item.overview || ''
         };
     }
 
-    // ========== API Service ==========
+    // ================================================================
+    //  API SERVICE
+    // ================================================================
     function RutorApiService() {
-        var self    = this;
+        var self     = this;
         self.network = new Lampa.Reguest();
 
-        self.fetch = function (url, onComplete, onError) {
+        // ---- fetch (внутренний, без нормализации пагинации) ----
+        self._fetchRaw = function (url, onComplete, onError) {
             self.network.silent(
                 url,
                 function (json) {
-                    if (!json || !json.results) { onComplete([]); return; }
-                    onComplete(json.results.map(normalizeCard));
+                    if (!json || !json.results) { onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 }); return; }
+                    onComplete({
+                        results:       json.results.map(normalizeCard),
+                        page:          json.page          || 1,
+                        total_pages:   json.total_pages   || 1,
+                        total_results: json.total_results || json.results.length
+                    });
                 },
                 function (err) {
                     console.warn('[V10] fetch error:', url, err);
                     if (onError) onError(err);
-                    else onComplete([]);
+                    else onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 });
                 }
             );
         };
 
+        // ---- Поиск ----
         self.search = function (params, onComplete, onError) {
             var query = (params.query || '').trim();
             if (!query) { onComplete({ results: [] }); return; }
@@ -131,6 +159,7 @@
             );
         };
 
+        // ---- Главный экран: category (горизонтальные ленты) ----
         self.category = function (params, onSuccess, onError) {
             var rows  = [];
             var total = CATEGORIES.length;
@@ -139,12 +168,13 @@
             CATEGORIES.forEach(function (cat) {
                 var url = WORKER_URL + cat.url + '?page=1&page_size=20';
 
-                self.fetch(url, function (items) {
+                self._fetchRaw(url, function (data) {
                     rows.push({
-                        title:   cat.title,
-                        results: items,
-                        url:     cat.url,
-                        source:  SOURCE_NAME
+                        title:       cat.title,
+                        results:     data.results,
+                        url:         cat.url,
+                        source:      SOURCE_NAME,
+                        total_pages: data.total_pages || 1
                     });
 
                     done++;
@@ -160,30 +190,31 @@
             });
         };
 
+        // ---- Список с пагинацией (при входе в категорию) ----
         self.list = function (params, onComplete, onError) {
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
-            var url = WORKER_URL + params.url +
+
+            // params.url содержит идентификатор категории, например 'movies'
+            var catUrl = params.url || 'top24';
+            var url = WORKER_URL + catUrl +
                       '?page='      + page +
                       '&page_size=' + pageSize;
 
-            self.network.silent(
-                url,
-                function (json) {
-                    if (!json || !json.results) { onComplete({ results: [] }); return; }
-                    onComplete({
-                        results:       json.results.map(normalizeCard),
-                        page:          json.page          || page,
-                        total_pages:   json.total_pages   || 1,
-                        total_results: json.total_results || json.results.length
-                    });
-                },
-                function () { onComplete({ results: [] }); }
-            );
+            self._fetchRaw(url, function (data) {
+                onComplete({
+                    results:       data.results,
+                    page:          data.page,
+                    total_pages:   data.total_pages,
+                    total_results: data.total_results
+                });
+            }, function () { onComplete({ results: [], page: 1, total_pages: 1, total_results: 0 }); });
         };
 
+        // ---- Полная карточка (детальная страница) ----
         self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
+
             var method = detectMediaMethod(card);
             params.method = method;
             if (card && typeof card === 'object') {
@@ -216,6 +247,12 @@
                 return;
             }
 
+            // Для отрицательных id (fallback-карточки воркера) — не ходим в TMDB
+            if (card.id < 0) {
+                fallbackFull({});
+                return;
+            }
+
             Lampa.Api.sources.tmdb.full(params, function (data) {
                 if (!data || !data.title) {
                     fallbackFull(data);
@@ -234,7 +271,9 @@
         };
     }
 
-    // ========== Пункт меню ==========
+    // ================================================================
+    //  ПУНКТ МЕНЮ (иконка + название V10)
+    // ================================================================
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
 
@@ -263,7 +302,18 @@
         else $('.menu__list').append(item);
     }
 
-    // ========== Инициализация ==========
+    // ================================================================
+    //  ПАГИНАЦИЯ — обработчик перехода по страницам внутри категории
+    // ================================================================
+    function setupPagination() {
+        // Lampa вызывает list при скролле / переходе на следующую страницу
+        // Наш self.list уже поддерживает params.page, этого достаточно.
+        // Дополнительно регистрируем компонент «category_more» если нужен ручной переход
+    }
+
+    // ================================================================
+    //  INIT
+    // ================================================================
     function init() {
         if (window.v10_plugin_ready) return;
         window.v10_plugin_ready = true;
@@ -276,6 +326,7 @@
             }
         });
 
+        setupPagination();
         setTimeout(addMenuItem, 2000);
     }
 
@@ -285,4 +336,5 @@
             if (e.type === 'ready') init();
         });
     }
+
 })();
