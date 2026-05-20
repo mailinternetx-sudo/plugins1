@@ -7,13 +7,18 @@
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
+    // ================================================================
+    //  КАТЕГОРИИ (порядок отображения в меню)
+    // ================================================================
     var CATEGORIES = [
-        { title: 'Топ 24 часа',          url: 'top24'       },
-        { title: 'Зарубежные фильмы',    url: 'movies'      },
-        { title: 'Наши фильмы',          url: 'movies_ru'   },
-        { title: 'Зарубежные сериалы',   url: 'tv_shows'    },
-        { title: 'Русские сериалы',      url: 'tv_shows_ru' },
-        { title: 'Телевизор',            url: 'televizor'   }
+        { title: 'Топ 24 часа',                url: 'top24',        method: 'movie' },
+        { title: 'Зарубежные фильмы',           url: 'movies',       method: 'movie' },
+        { title: 'Наши фильмы',                 url: 'movies_ru',    method: 'movie' },
+        { title: 'Зарубежные сериалы',          url: 'tv_shows',     method: 'tv'    },
+        { title: 'Русские сериалы',             url: 'tv_shows_ru',  method: 'tv'    },
+        { title: 'Телевизор',                   url: 'televizor',    method: 'tv'    },
+        { title: 'Юмор',                        url: 'humor',        method: 'tv'    },
+        { title: 'Русские детективные сериалы', url: 'detective_ru', method: 'tv'    }
     ];
 
     // ================================================================
@@ -44,7 +49,8 @@
     // ================================================================
     function detectMediaMethod(item) {
         if (
-            item.type === 'tv' ||
+            item.method === 'tv' ||
+            item.type   === 'tv' ||
             item.number_of_seasons ||
             item.seasons ||
             item.first_air_date
@@ -75,10 +81,8 @@
             backdropPath = '/t/p/original' + backdropPath;
         }
 
-        var title = item.title || item.name || '';
-
-        var type   = item.type || 'movie';
-        var method = detectMediaMethod(item);
+        var title  = item.title || item.name || '';
+        var method = item.method || detectMediaMethod(item);
 
         return {
             id:               item.id,
@@ -97,7 +101,7 @@
             first_air_date:    item.first_air_date     || '',
             number_of_seasons: item.number_of_seasons  || undefined,
 
-            type:             type,
+            type:             method,
             method:           method,
             release_quality:  item.release_quality   || '',
             source:           SOURCE_NAME,
@@ -111,24 +115,31 @@
     //  API SERVICE
     // ================================================================
     function RutorApiService() {
-        var self    = this;
+        var self     = this;
         self.network = new Lampa.Reguest();
 
-        self.fetch = function (url, onComplete, onError) {
+        // ---- fetch (внутренний, без нормализации пагинации) ----
+        self._fetchRaw = function (url, onComplete, onError) {
             self.network.silent(
                 url,
                 function (json) {
-                    if (!json || !json.results) { onComplete([]); return; }
-                    onComplete(json.results.map(normalizeCard));
+                    if (!json || !json.results) { onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 }); return; }
+                    onComplete({
+                        results:       json.results.map(normalizeCard),
+                        page:          json.page          || 1,
+                        total_pages:   json.total_pages   || 1,
+                        total_results: json.total_results || json.results.length
+                    });
                 },
                 function (err) {
                     console.warn('[V10] fetch error:', url, err);
                     if (onError) onError(err);
-                    else onComplete([]);
+                    else onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 });
                 }
             );
         };
 
+        // ---- Поиск ----
         self.search = function (params, onComplete, onError) {
             var query = (params.query || '').trim();
             if (!query) { onComplete({ results: [] }); return; }
@@ -149,6 +160,7 @@
             );
         };
 
+        // ---- Главный экран: category (горизонтальные ленты) ----
         self.category = function (params, onSuccess, onError) {
             var rows  = [];
             var total = CATEGORIES.length;
@@ -157,12 +169,13 @@
             CATEGORIES.forEach(function (cat) {
                 var url = WORKER_URL + cat.url + '?page=1&page_size=20';
 
-                self.fetch(url, function (items) {
+                self._fetchRaw(url, function (data) {
                     rows.push({
-                        title:   cat.title,
-                        results: items,
-                        url:     cat.url,
-                        source:  SOURCE_NAME
+                        title:       cat.title,
+                        results:     data.results,
+                        url:         cat.url,
+                        source:      SOURCE_NAME,
+                        total_pages: data.total_pages || 1
                     });
 
                     done++;
@@ -178,28 +191,28 @@
             });
         };
 
+        // ---- Список с пагинацией (при входе в категорию) ----
         self.list = function (params, onComplete, onError) {
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
-            var url = WORKER_URL + params.url +
+
+            // Для detective_ru поддерживаем пагинацию через IVI
+            var catUrl = params.url || 'top24';
+            var url = WORKER_URL + catUrl +
                       '?page='      + page +
                       '&page_size=' + pageSize;
 
-            self.network.silent(
-                url,
-                function (json) {
-                    if (!json || !json.results) { onComplete({ results: [] }); return; }
-                    onComplete({
-                        results:       json.results.map(normalizeCard),
-                        page:          json.page          || page,
-                        total_pages:   json.total_pages   || 1,
-                        total_results: json.total_results || json.results.length
-                    });
-                },
-                function () { onComplete({ results: [] }); }
-            );
+            self._fetchRaw(url, function (data) {
+                onComplete({
+                    results:       data.results,
+                    page:          data.page,
+                    total_pages:   data.total_pages,
+                    total_results: data.total_results
+                });
+            }, function () { onComplete({ results: [], page: 1, total_pages: 1, total_results: 0 }); });
         };
 
+        // ---- Полная карточка (детальная страница) ----
         self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
 
@@ -235,6 +248,11 @@
                 return;
             }
 
+            if (card.id < 0) {
+                fallbackFull({});
+                return;
+            }
+
             Lampa.Api.sources.tmdb.full(params, function (data) {
                 if (!data || !data.title) {
                     fallbackFull(data);
@@ -254,18 +272,40 @@
     }
 
     // ================================================================
-    //  ПУНКТ МЕНЮ (иконка катаны + название V10)
+    //  ПУНКТ МЕНЮ (иконка салюта + название V10)
     // ================================================================
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
 
+        // Иконка — салют / фейерверк
+        var saluteIcon = [
+            '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor" xmlns="http://www.w3.org/2000/svg">',
+            '  <!-- центральная ракета -->',
+            '  <line x1="12" y1="14" x2="12" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <!-- взрыв: 8 лучей -->',
+            '  <line x1="12" y1="12" x2="12" y2="4"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="4"  y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="6"  y2="6"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="18" y2="6"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="6"  y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="18" y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <!-- искры на концах лучей -->',
+            '  <circle cx="12" cy="3"  r="1.2" fill="currentColor"/>',
+            '  <circle cx="3"  cy="12" r="1.2" fill="currentColor"/>',
+            '  <circle cx="21" cy="12" r="1.2" fill="currentColor"/>',
+            '  <circle cx="5"  cy="5"  r="1.2" fill="currentColor"/>',
+            '  <circle cx="19" cy="5"  r="1.2" fill="currentColor"/>',
+            '  <circle cx="5"  cy="19" r="1.2" fill="currentColor"/>',
+            '  <circle cx="19" cy="19" r="1.2" fill="currentColor"/>',
+            '  <!-- центр -->',
+            '  <circle cx="12" cy="12" r="2"   fill="currentColor"/>',
+            '</svg>'
+        ].join('');
+
         var item = $(
             '<li class="menu__item selector" data-action="v10">' +
-            '<div class="menu__ico">' +
-            '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor">' +
-            '<path d="M12 2L10 22H14L12 2Z M11 6H13V18H11V6Z"/>' +  // простая катана
-            '</svg>' +
-            '</div>' +
+            '<div class="menu__ico">' + saluteIcon + '</div>' +
             '<div class="menu__text">' + SOURCE_NAME + '</div>' +
             '</li>'
         );
