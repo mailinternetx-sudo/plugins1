@@ -196,7 +196,6 @@
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
 
-            // Для detective_ru поддерживаем пагинацию через IVI
             var catUrl = params.url || 'top24';
             var url = WORKER_URL + catUrl +
                       '?page='      + page +
@@ -277,12 +276,11 @@
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
 
-        // Иконка — салют / фейерверк
         var saluteIcon = [
             '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor" xmlns="http://www.w3.org/2000/svg">',
-            '  <!-- центральная ракета -->',
+            '  ',
             '  <line x1="12" y1="14" x2="12" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
-            '  <!-- взрыв: 8 лучей -->',
+            '  ',
             '  <line x1="12" y1="12" x2="12" y2="4"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '  <line x1="12" y1="12" x2="4"  y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '  <line x1="12" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
@@ -290,7 +288,7 @@
             '  <line x1="12" y1="12" x2="18" y2="6"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '  <line x1="12" y1="12" x2="6"  y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '  <line x1="12" y1="12" x2="18" y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
-            '  <!-- искры на концах лучей -->',
+            '  ',
             '  <circle cx="12" cy="3"  r="1.2" fill="currentColor"/>',
             '  <circle cx="3"  cy="12" r="1.2" fill="currentColor"/>',
             '  <circle cx="21" cy="12" r="1.2" fill="currentColor"/>',
@@ -298,7 +296,7 @@
             '  <circle cx="19" cy="5"  r="1.2" fill="currentColor"/>',
             '  <circle cx="5"  cy="19" r="1.2" fill="currentColor"/>',
             '  <circle cx="19" cy="19" r="1.2" fill="currentColor"/>',
-            '  <!-- центр -->',
+            '  ',
             '  <circle cx="12" cy="12" r="2"   fill="currentColor"/>',
             '</svg>'
         ].join('');
