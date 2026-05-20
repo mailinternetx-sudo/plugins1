@@ -7,9 +7,6 @@
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
-    // ================================================================
-    //  КАТЕГОРИИ (порядок отображения в меню)
-    // ================================================================
     var CATEGORIES = [
         { title: 'Топ 24 часа',                url: 'top24',        method: 'movie' },
         { title: 'Зарубежные фильмы',           url: 'movies',       method: 'movie' },
@@ -21,9 +18,6 @@
         { title: 'Русские детективные сериалы', url: 'detective_ru', method: 'tv'    }
     ];
 
-    // ================================================================
-    //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
-    // ================================================================
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
         if (item.poster_path) {
@@ -44,9 +38,6 @@
         return '';
     }
 
-    // ================================================================
-    //  ОПРЕДЕЛЯЕМ ТИП КАРТОЧКИ — tv или movie
-    // ================================================================
     function detectMediaMethod(item) {
         if (
             item.method === 'tv' ||
@@ -60,24 +51,17 @@
         return 'movie';
     }
 
-    // ================================================================
-    //  НОРМАЛИЗАЦИЯ КАРТОЧКИ
-    // ================================================================
     function normalizeCard(item) {
         var img = buildImg(item);
         var bg  = buildBg(item);
 
         var posterPath = item.poster_path || '';
-        if (posterPath &&
-            !posterPath.startsWith('/t/p/') &&
-            !posterPath.startsWith('http')) {
+        if (posterPath && !posterPath.startsWith('/t/p/') && !posterPath.startsWith('http')) {
             posterPath = '/t/p/w500' + posterPath;
         }
 
         var backdropPath = item.backdrop_path || '';
-        if (backdropPath &&
-            !backdropPath.startsWith('/t/p/') &&
-            !backdropPath.startsWith('http')) {
+        if (backdropPath && !backdropPath.startsWith('/t/p/') && !backdropPath.startsWith('http')) {
             backdropPath = '/t/p/original' + backdropPath;
         }
 
@@ -90,30 +74,23 @@
             name:             item.name           || title,
             original_title:   item.original_title  || title,
             overview:         item.overview        || '',
-
             poster_path:      posterPath,
             backdrop_path:    backdropPath,
             img:              img,
             background_image: bg,
-
             vote_average:      item.vote_average      || 0,
             release_date:      item.release_date       || '',
             first_air_date:    item.first_air_date     || '',
             number_of_seasons: item.number_of_seasons  || undefined,
-
             type:             method,
             method:           method,
             release_quality:  item.release_quality   || '',
             source:           SOURCE_NAME,
-
-            promo_title: item.promo_title || title,
-            promo:       item.promo       || item.overview || ''
+            promo_title:      item.promo_title || title,
+            promo:            item.promo       || item.overview || ''
         };
     }
 
-    // ================================================================
-    //  API SERVICE
-    // ================================================================
     function RutorApiService() {
         var self     = this;
         self.network = new Lampa.Reguest();
@@ -184,6 +161,9 @@
                         });
                         onSuccess(rows);
                     }
+                }, function() {
+                    done++;
+                    if (done === total) onSuccess(rows);
                 });
             });
         };
@@ -191,8 +171,8 @@
         self.list = function (params, onComplete, onError) {
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
-            var catUrl = params.url || 'top24';
-            var url = WORKER_URL + catUrl + '?page=' + page + '&page_size=' + pageSize;
+            var catUrl   = params.url || 'top24';
+            var url      = WORKER_URL + catUrl + '?page=' + page + '&page_size=' + pageSize;
 
             self._fetchRaw(url, function (data) {
                 onComplete({
@@ -233,12 +213,7 @@
                 onSuccess(data);
             }
 
-            if (!card.id || card.id <= 0 || String(card.id).length < 3) {
-                fallbackFull({});
-                return;
-            }
-
-            if (card.id < 0) {
+            if (!card.id || card.id <= 0 || String(card.id).length < 3 || card.id < 0) {
                 fallbackFull({});
                 return;
             }
@@ -293,7 +268,12 @@
         );
 
         item.on('hover:enter', function () {
-            Lampa.Activity.push({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, method: 'category' });
+            Lampa.Activity.push({
+                title:     SOURCE_NAME,
+                component: 'category',
+                source:    SOURCE_NAME,
+                method:    'category'
+            });
         });
 
         var $after = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').first().parent();
@@ -308,12 +288,19 @@
         Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
 
         Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready' || e.type === 'render') setTimeout(addMenuItem, 1000);
+            if (e.type === 'ready' || e.type === 'render') {
+                setTimeout(addMenuItem, 1000);
+            }
         });
+
         setTimeout(addMenuItem, 2000);
     }
 
     if (window.appready) init();
-    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') init(); });
+    else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') init();
+        });
+    }
 
 })();
