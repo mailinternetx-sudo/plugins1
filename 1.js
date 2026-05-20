@@ -8,19 +8,22 @@
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
     // ================================================================
-    //  КАТЕГОРИИ
+    //  КАТЕГОРИИ (порядок отображения в меню)
     // ================================================================
     var CATEGORIES = [
-        { title: 'Топ 24 часа',              url: 'top24',               method: 'movie' },
-        { title: 'Зарубежные фильмы',        url: 'movies',              method: 'movie' },
-        { title: 'Наши фильмы',              url: 'movies_ru',           method: 'movie' },
-        { title: 'Зарубежные сериалы',       url: 'tv_shows',            method: 'tv'    },
-        { title: 'Русские сериалы',          url: 'tv_shows_ru',         method: 'tv'    },
-        { title: 'Русские детективные сериалы', url: 'russian_detectives', method: 'tv' },
-        { title: 'Телевизор',                url: 'televizor',           method: 'tv'    },
-        { title: 'Юмор',                     url: 'humor',               method: 'tv'    }
+        { title: 'Топ 24 часа',                url: 'top24',        method: 'movie' },
+        { title: 'Зарубежные фильмы',           url: 'movies',       method: 'movie' },
+        { title: 'Наши фильмы',                 url: 'movies_ru',    method: 'movie' },
+        { title: 'Зарубежные сериалы',          url: 'tv_shows',     method: 'tv'    },
+        { title: 'Русские сериалы',             url: 'tv_shows_ru',  method: 'tv'    },
+        { title: 'Телевизор',                   url: 'televizor',    method: 'tv'    },
+        { title: 'Юмор',                        url: 'humor',        method: 'tv'    },
+        { title: 'Русские детективные сериалы', url: 'detective_ru', method: 'tv'    }
     ];
 
+    // ================================================================
+    //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
+    // ================================================================
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
         if (item.poster_path) {
@@ -41,24 +44,40 @@
         return '';
     }
 
+    // ================================================================
+    //  ОПРЕДЕЛЯЕМ ТИП КАРТОЧКИ — tv или movie
+    // ================================================================
     function detectMediaMethod(item) {
-        if (item.method === 'tv' || item.type === 'tv' || item.number_of_seasons || item.seasons || item.first_air_date) {
+        if (
+            item.method === 'tv' ||
+            item.type   === 'tv' ||
+            item.number_of_seasons ||
+            item.seasons ||
+            item.first_air_date
+        ) {
             return 'tv';
         }
         return 'movie';
     }
 
+    // ================================================================
+    //  НОРМАЛИЗАЦИЯ КАРТОЧКИ
+    // ================================================================
     function normalizeCard(item) {
         var img = buildImg(item);
         var bg  = buildBg(item);
 
         var posterPath = item.poster_path || '';
-        if (posterPath && !posterPath.startsWith('/t/p/') && !posterPath.startsWith('http')) {
+        if (posterPath &&
+            !posterPath.startsWith('/t/p/') &&
+            !posterPath.startsWith('http')) {
             posterPath = '/t/p/w500' + posterPath;
         }
 
         var backdropPath = item.backdrop_path || '';
-        if (backdropPath && !backdropPath.startsWith('/t/p/') && !backdropPath.startsWith('http')) {
+        if (backdropPath &&
+            !backdropPath.startsWith('/t/p/') &&
+            !backdropPath.startsWith('http')) {
             backdropPath = '/t/p/original' + backdropPath;
         }
 
@@ -92,122 +111,242 @@
         };
     }
 
+    // ================================================================
+    //  API SERVICE
+    // ================================================================
     function RutorApiService() {
-        var self = this;
+        var self     = this;
         self.network = new Lampa.Reguest();
 
+        // ---- fetch (внутренний, без нормализации пагинации) ----
         self._fetchRaw = function (url, onComplete, onError) {
-            self.network.silent(url, function (json) {
-                if (!json || !json.results) {
-                    onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 });
-                    return;
+            self.network.silent(
+                url,
+                function (json) {
+                    if (!json || !json.results) { onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 }); return; }
+                    onComplete({
+                        results:       json.results.map(normalizeCard),
+                        page:          json.page          || 1,
+                        total_pages:   json.total_pages   || 1,
+                        total_results: json.total_results || json.results.length
+                    });
+                },
+                function (err) {
+                    console.warn('[V10] fetch error:', url, err);
+                    if (onError) onError(err);
+                    else onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 });
                 }
-                onComplete({
-                    results:       json.results.map(normalizeCard),
-                    page:          json.page          || 1,
-                    total_pages:   json.total_pages   || 1,
-                    total_results: json.total_results || json.results.length
-                });
-            }, function (err) {
-                console.warn('[V10] fetch error:', url, err);
-                onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 });
-            });
+            );
         };
 
-        self.search = function (params, onComplete) {
+        // ---- Поиск ----
+        self.search = function (params, onComplete, onError) {
             var query = (params.query || '').trim();
-            if (!query) return onComplete({ results: [] });
+            if (!query) { onComplete({ results: [] }); return; }
 
-            self.network.silent(WORKER_URL + 'search?query=' + encodeURIComponent(query), function (json) {
-                onComplete({ results: (json?.results || []).map(normalizeCard) });
-            }, function () { onComplete({ results: [] }); });
+            var url = WORKER_URL + 'search?query=' + encodeURIComponent(query);
+
+            self.network.silent(
+                url,
+                function (json) {
+                    if (!json || !json.results) { onComplete({ results: [] }); return; }
+                    onComplete({
+                        results:     json.results.map(normalizeCard),
+                        page:        json.page        || 1,
+                        total_pages: json.total_pages || 1
+                    });
+                },
+                function () { onComplete({ results: [] }); }
+            );
         };
 
-        self.category = function (params, onSuccess) {
-            var rows = [], done = 0, total = CATEGORIES.length;
+        // ---- Главный экран: category (горизонтальные ленты) ----
+        self.category = function (params, onSuccess, onError) {
+            var rows  = [];
+            var total = CATEGORIES.length;
+            var done  = 0;
 
             CATEGORIES.forEach(function (cat) {
-                self._fetchRaw(WORKER_URL + cat.url + '?page=1&page_size=20', function (data) {
+                var url = WORKER_URL + cat.url + '?page=1&page_size=20';
+
+                self._fetchRaw(url, function (data) {
                     rows.push({
-                        title: cat.title,
-                        results: data.results,
-                        url: cat.url,
-                        source: SOURCE_NAME,
+                        title:       cat.title,
+                        results:     data.results,
+                        url:         cat.url,
+                        source:      SOURCE_NAME,
                         total_pages: data.total_pages || 1
                     });
-                    if (++done === total) {
-                        rows.sort((a,b) => CATEGORIES.findIndex(c => c.url === a.url) - CATEGORIES.findIndex(c => c.url === b.url));
+
+                    done++;
+                    if (done === total) {
+                        rows.sort(function (a, b) {
+                            var ia = CATEGORIES.findIndex(function (c) { return c.url === a.url; });
+                            var ib = CATEGORIES.findIndex(function (c) { return c.url === b.url; });
+                            return ia - ib;
+                        });
                         onSuccess(rows);
                     }
                 });
             });
         };
 
-        self.list = function (params, onComplete) {
-            var page = params.page || 1;
+        // ---- Список с пагинацией (при входе в категорию) ----
+        self.list = function (params, onComplete, onError) {
+            var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
-            var catUrl = params.url || 'top24';
 
-            self._fetchRaw(WORKER_URL + catUrl + '?page=' + page + '&page_size=' + pageSize, onComplete);
+            // Для detective_ru поддерживаем пагинацию через IVI
+            var catUrl = params.url || 'top24';
+            var url = WORKER_URL + catUrl +
+                      '?page='      + page +
+                      '&page_size=' + pageSize;
+
+            self._fetchRaw(url, function (data) {
+                onComplete({
+                    results:       data.results,
+                    page:          data.page,
+                    total_pages:   data.total_pages,
+                    total_results: data.total_results
+                });
+            }, function () { onComplete({ results: [], page: 1, total_pages: 1, total_results: 0 }); });
         };
 
-        self.full = function (params, onSuccess) {
+        // ---- Полная карточка (детальная страница) ----
+        self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
+
             var method = detectMediaMethod(card);
+            params.method = method;
+            if (card && typeof card === 'object') {
+                card.method = method;
+                card.type   = method;
+            }
 
-            var savedImg = params.img || card.img || '';
-            var savedBg = params.background_image || card.background_image || '';
-            var savedQuality = params.release_quality || card.release_quality || '';
+            var savedImg     = params.img              || (card && card.img)              || '';
+            var savedBg      = params.background_image || (card && card.background_image) || '';
+            var savedQuality = params.release_quality  || (card && card.release_quality)  || '';
 
-            function fallback(data) {
+            function fallbackFull(data) {
                 data = data || {};
                 if (!data.title) data.title = card.title || card.name || '';
                 if (!data.img && savedImg) data.img = savedImg;
                 if (!data.background_image && savedBg) data.background_image = savedBg;
                 if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
-                data.type = data.method = method;
+                data.type   = method;
+                data.method = method;
+                for (var k in card) {
+                    if (card.hasOwnProperty(k) && data[k] === undefined) {
+                        data[k] = card[k];
+                    }
+                }
                 onSuccess(data);
             }
 
-            if (!card.id || card.id < 0) return fallback({});
+            if (!card.id || card.id <= 0 || String(card.id).length < 3) {
+                fallbackFull({});
+                return;
+            }
+
+            if (card.id < 0) {
+                fallbackFull({});
+                return;
+            }
 
             Lampa.Api.sources.tmdb.full(params, function (data) {
-                if (data && data.title) {
+                if (!data || !data.title) {
+                    fallbackFull(data);
+                } else {
                     if (!data.img && savedImg) data.img = savedImg;
                     if (!data.background_image && savedBg) data.background_image = savedBg;
-                    data.type = data.method = method;
+                    if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
+                    data.type   = method;
+                    data.method = method;
                     onSuccess(data);
-                } else fallback(data);
-            }, () => fallback({}));
+                }
+            }, function (err) {
+                console.warn('[V10] TMDB full error:', err);
+                fallbackFull({});
+            });
         };
     }
 
+    // ================================================================
+    //  ПУНКТ МЕНЮ (иконка салюта + название V10)
+    // ================================================================
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
-        var item = $('<li class="menu__item selector" data-action="v10">' +
-            '<div class="menu__ico"><svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor"><path d="M12 2L10 22H14L12 2Z M11 6H13V18H11V6Z"/></svg></div>' +
-            '<div class="menu__text">' + SOURCE_NAME + '</div></li>');
+
+        // Иконка — салют / фейерверк
+        var saluteIcon = [
+            '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor" xmlns="http://www.w3.org/2000/svg">',
+            '  <!-- центральная ракета -->',
+            '  <line x1="12" y1="14" x2="12" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <!-- взрыв: 8 лучей -->',
+            '  <line x1="12" y1="12" x2="12" y2="4"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="4"  y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="6"  y2="6"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="18" y2="6"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="6"  y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <line x1="12" y1="12" x2="18" y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  <!-- искры на концах лучей -->',
+            '  <circle cx="12" cy="3"  r="1.2" fill="currentColor"/>',
+            '  <circle cx="3"  cy="12" r="1.2" fill="currentColor"/>',
+            '  <circle cx="21" cy="12" r="1.2" fill="currentColor"/>',
+            '  <circle cx="5"  cy="5"  r="1.2" fill="currentColor"/>',
+            '  <circle cx="19" cy="5"  r="1.2" fill="currentColor"/>',
+            '  <circle cx="5"  cy="19" r="1.2" fill="currentColor"/>',
+            '  <circle cx="19" cy="19" r="1.2" fill="currentColor"/>',
+            '  <!-- центр -->',
+            '  <circle cx="12" cy="12" r="2"   fill="currentColor"/>',
+            '</svg>'
+        ].join('');
+
+        var item = $(
+            '<li class="menu__item selector" data-action="v10">' +
+            '<div class="menu__ico">' + saluteIcon + '</div>' +
+            '<div class="menu__text">' + SOURCE_NAME + '</div>' +
+            '</li>'
+        );
 
         item.on('hover:enter', function () {
-            Lampa.Activity.push({ title: SOURCE_NAME, component: 'category', source: SOURCE_NAME, method: 'category' });
+            Lampa.Activity.push({
+                title:     SOURCE_NAME,
+                component: 'category',
+                source:    SOURCE_NAME,
+                method:    'category'
+            });
         });
 
-        var after = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').first().parent();
-        after.length ? after.after(item) : $('.menu__list').append(item);
+        var $after = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').first().parent();
+        if ($after.length) $after.after(item);
+        else $('.menu__list').append(item);
     }
 
+    // ================================================================
+    //  INIT
+    // ================================================================
     function init() {
         if (window.v10_plugin_ready) return;
         window.v10_plugin_ready = true;
 
         Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
 
-        Lampa.Listener.follow('app', e => {
-            if (e.type === 'ready' || e.type === 'render') setTimeout(addMenuItem, 800);
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready' || e.type === 'render') {
+                setTimeout(addMenuItem, 1000);
+            }
         });
-        setTimeout(addMenuItem, 1500);
+
+        setTimeout(addMenuItem, 2000);
     }
 
     if (window.appready) init();
-    else Lampa.Listener.follow('app', e => e.type === 'ready' && init());
+    else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') init();
+        });
+    }
+
 })();
