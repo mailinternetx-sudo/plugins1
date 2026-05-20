@@ -7,6 +7,9 @@
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
+    // ================================================================
+    //  КАТЕГОРИИ (порядок отображения в меню)
+    // ================================================================
     var CATEGORIES = [
         { title: 'Топ 24 часа',                url: 'top24',        method: 'movie' },
         { title: 'Зарубежные фильмы',           url: 'movies',       method: 'movie' },
@@ -18,6 +21,9 @@
         { title: 'Русские детективные сериалы', url: 'detective_ru', method: 'tv'    }
     ];
 
+    // ================================================================
+    //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
+    // ================================================================
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
         if (item.poster_path) {
@@ -38,6 +44,9 @@
         return '';
     }
 
+    // ================================================================
+    //  ОПРЕДЕЛЯЕМ ТИП КАРТОЧКИ — tv или movie
+    // ================================================================
     function detectMediaMethod(item) {
         if (
             item.method === 'tv' ||
@@ -51,17 +60,24 @@
         return 'movie';
     }
 
+    // ================================================================
+    //  НОРМАЛИЗАЦИЯ КАРТОЧКИ
+    // ================================================================
     function normalizeCard(item) {
         var img = buildImg(item);
         var bg  = buildBg(item);
 
         var posterPath = item.poster_path || '';
-        if (posterPath && !posterPath.startsWith('/t/p/') && !posterPath.startsWith('http')) {
+        if (posterPath &&
+            !posterPath.startsWith('/t/p/') &&
+            !posterPath.startsWith('http')) {
             posterPath = '/t/p/w500' + posterPath;
         }
 
         var backdropPath = item.backdrop_path || '';
-        if (backdropPath && !backdropPath.startsWith('/t/p/') && !backdropPath.startsWith('http')) {
+        if (backdropPath &&
+            !backdropPath.startsWith('/t/p/') &&
+            !backdropPath.startsWith('http')) {
             backdropPath = '/t/p/original' + backdropPath;
         }
 
@@ -74,27 +90,35 @@
             name:             item.name           || title,
             original_title:   item.original_title  || title,
             overview:         item.overview        || '',
+
             poster_path:      posterPath,
             backdrop_path:    backdropPath,
             img:              img,
             background_image: bg,
+
             vote_average:      item.vote_average      || 0,
             release_date:      item.release_date       || '',
             first_air_date:    item.first_air_date     || '',
             number_of_seasons: item.number_of_seasons  || undefined,
+
             type:             method,
             method:           method,
             release_quality:  item.release_quality   || '',
             source:           SOURCE_NAME,
-            promo_title:      item.promo_title || title,
-            promo:            item.promo       || item.overview || ''
+
+            promo_title: item.promo_title || title,
+            promo:       item.promo       || item.overview || ''
         };
     }
 
+    // ================================================================
+    //  API SERVICE
+    // ================================================================
     function RutorApiService() {
         var self     = this;
         self.network = new Lampa.Reguest();
 
+        // ---- fetch (внутренний, без нормализации пагинации) ----
         self._fetchRaw = function (url, onComplete, onError) {
             self.network.silent(
                 url,
@@ -115,6 +139,7 @@
             );
         };
 
+        // ---- Поиск ----
         self.search = function (params, onComplete, onError) {
             var query = (params.query || '').trim();
             if (!query) { onComplete({ results: [] }); return; }
@@ -135,6 +160,7 @@
             );
         };
 
+        // ---- Главный экран: category (горизонтальные ленты) ----
         self.category = function (params, onSuccess, onError) {
             var rows  = [];
             var total = CATEGORIES.length;
@@ -161,18 +187,19 @@
                         });
                         onSuccess(rows);
                     }
-                }, function() {
-                    done++;
-                    if (done === total) onSuccess(rows);
                 });
             });
         };
 
+        // ---- Список с пагинацией (при входе в категорию) ----
         self.list = function (params, onComplete, onError) {
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
-            var catUrl   = params.url || 'top24';
-            var url      = WORKER_URL + catUrl + '?page=' + page + '&page_size=' + pageSize;
+
+            var catUrl = params.url || 'top24';
+            var url = WORKER_URL + catUrl +
+                      '?page='      + page +
+                      '&page_size=' + pageSize;
 
             self._fetchRaw(url, function (data) {
                 onComplete({
@@ -184,8 +211,10 @@
             }, function () { onComplete({ results: [], page: 1, total_pages: 1, total_results: 0 }); });
         };
 
+        // ---- Полная карточка (детальная страница) ----
         self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
+
             var method = detectMediaMethod(card);
             params.method = method;
             if (card && typeof card === 'object') {
@@ -213,7 +242,12 @@
                 onSuccess(data);
             }
 
-            if (!card.id || card.id <= 0 || String(card.id).length < 3 || card.id < 0) {
+            if (!card.id || card.id <= 0 || String(card.id).length < 3) {
+                fallbackFull({});
+                return;
+            }
+
+            if (card.id < 0) {
                 fallbackFull({});
                 return;
             }
@@ -236,12 +270,17 @@
         };
     }
 
+    // ================================================================
+    //  ПУНКТ МЕНЮ (иконка салюта + название V10)
+    // ================================================================
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
 
         var saluteIcon = [
             '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor" xmlns="http://www.w3.org/2000/svg">',
+            '  ',
             '  <line x1="12" y1="14" x2="12" y2="22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  ',
             '  <line x1="12" y1="12" x2="12" y2="4"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '  <line x1="12" y1="12" x2="4"  y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '  <line x1="12" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
@@ -249,6 +288,7 @@
             '  <line x1="12" y1="12" x2="18" y2="6"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '  <line x1="12" y1="12" x2="6"  y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '  <line x1="12" y1="12" x2="18" y2="18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+            '  ',
             '  <circle cx="12" cy="3"  r="1.2" fill="currentColor"/>',
             '  <circle cx="3"  cy="12" r="1.2" fill="currentColor"/>',
             '  <circle cx="21" cy="12" r="1.2" fill="currentColor"/>',
@@ -256,6 +296,7 @@
             '  <circle cx="19" cy="5"  r="1.2" fill="currentColor"/>',
             '  <circle cx="5"  cy="19" r="1.2" fill="currentColor"/>',
             '  <circle cx="19" cy="19" r="1.2" fill="currentColor"/>',
+            '  ',
             '  <circle cx="12" cy="12" r="2"   fill="currentColor"/>',
             '</svg>'
         ].join('');
@@ -281,6 +322,9 @@
         else $('.menu__list').append(item);
     }
 
+    // ================================================================
+    //  INIT
+    // ================================================================
     function init() {
         if (window.v10_plugin_ready) return;
         window.v10_plugin_ready = true;
