@@ -196,6 +196,7 @@
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
 
+            // Динамически подставляется категория detective_ru, пагинация идет на rosserial
             var catUrl = params.url || 'top24';
             var url = WORKER_URL + catUrl +
                       '?page='      + page +
