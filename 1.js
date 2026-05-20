@@ -8,21 +8,21 @@
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
     // ================================================================
-    //  КАТЕГОРИИ (порядок отображения в меню)
+    //  КАТЕГОРИИ
     // ================================================================
     var CATEGORIES = [
-        { title: 'Топ 24 часа',          url: 'top24',         method: 'movie' },
-        { title: 'Зарубежные фильмы',    url: 'movies',        method: 'movie' },
-        { title: 'Наши фильмы',          url: 'movies_ru',     method: 'movie' },
-        { title: 'Зарубежные сериалы',   url: 'tv_shows',      method: 'tv'    },
-        { title: 'Русские сериалы',      url: 'tv_shows_ru',   method: 'tv'    },
-        { title: 'Телевизор',            url: 'televizor',     method: 'tv'    },
-        { title: 'Юмор',                 url: 'humor',         method: 'tv'    },
-        { title: 'Русские детективные сериалы', url: 'detective_ru', method: 'tv' }
+        { title: 'Топ 24 часа',              url: 'top24',               method: 'movie' },
+        { title: 'Зарубежные фильмы',        url: 'movies',              method: 'movie' },
+        { title: 'Наши фильмы',              url: 'movies_ru',           method: 'movie' },
+        { title: 'Зарубежные сериалы',       url: 'tv_shows',            method: 'tv'    },
+        { title: 'Русские сериалы',          url: 'tv_shows_ru',         method: 'tv'    },
+        { title: 'Русские детективные сериалы', url: 'russian_detectives', method: 'tv' },
+        { title: 'Телевизор',                url: 'televizor',           method: 'tv'    },
+        { title: 'Юмор',                     url: 'humor',               method: 'tv'    }
     ];
 
     // ================================================================
-    //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
+    //  УТИЛИТЫ
     // ================================================================
     function buildImg(item) {
         if (item.img && item.img.startsWith('http')) return item.img;
@@ -44,9 +44,6 @@
         return '';
     }
 
-    // ================================================================
-    //  ОПРЕДЕЛЯЕМ ТИП КАРТОЧКИ — tv или movie
-    // ================================================================
     function detectMediaMethod(item) {
         if (
             item.method === 'tv' ||
@@ -60,24 +57,17 @@
         return 'movie';
     }
 
-    // ================================================================
-    //  НОРМАЛИЗАЦИЯ КАРТОЧКИ
-    // ================================================================
     function normalizeCard(item) {
         var img = buildImg(item);
         var bg  = buildBg(item);
 
         var posterPath = item.poster_path || '';
-        if (posterPath &&
-            !posterPath.startsWith('/t/p/') &&
-            !posterPath.startsWith('http')) {
+        if (posterPath && !posterPath.startsWith('/t/p/') && !posterPath.startsWith('http')) {
             posterPath = '/t/p/w500' + posterPath;
         }
 
         var backdropPath = item.backdrop_path || '';
-        if (backdropPath &&
-            !backdropPath.startsWith('/t/p/') &&
-            !backdropPath.startsWith('http')) {
+        if (backdropPath && !backdropPath.startsWith('/t/p/') && !backdropPath.startsWith('http')) {
             backdropPath = '/t/p/original' + backdropPath;
         }
 
@@ -118,12 +108,14 @@
         var self     = this;
         self.network = new Lampa.Reguest();
 
-        // ---- fetch (внутренний, без нормализации пагинации) ----
         self._fetchRaw = function (url, onComplete, onError) {
             self.network.silent(
                 url,
                 function (json) {
-                    if (!json || !json.results) { onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 }); return; }
+                    if (!json || !json.results) {
+                        onComplete({ results: [], total_pages: 1, page: 1, total_results: 0 });
+                        return;
+                    }
                     onComplete({
                         results:       json.results.map(normalizeCard),
                         page:          json.page          || 1,
@@ -139,7 +131,6 @@
             );
         };
 
-        // ---- Поиск ----
         self.search = function (params, onComplete, onError) {
             var query = (params.query || '').trim();
             if (!query) { onComplete({ results: [] }); return; }
@@ -160,7 +151,6 @@
             );
         };
 
-        // ---- Главный экран: category (горизонтальные ленты) ----
         self.category = function (params, onSuccess, onError) {
             var rows  = [];
             var total = CATEGORIES.length;
@@ -191,15 +181,12 @@
             });
         };
 
-        // ---- Список с пагинацией (при входе в категорию) ----
         self.list = function (params, onComplete, onError) {
             var page     = params.page     || 1;
             var pageSize = params.page_size || 30;
 
             var catUrl = params.url || 'top24';
-            var url = WORKER_URL + catUrl +
-                      '?page='      + page +
-                      '&page_size=' + pageSize;
+            var url = WORKER_URL + catUrl + '?page=' + page + '&page_size=' + pageSize;
 
             self._fetchRaw(url, function (data) {
                 onComplete({
@@ -211,10 +198,8 @@
             }, function () { onComplete({ results: [], page: 1, total_pages: 1, total_results: 0 }); });
         };
 
-        // ---- Полная карточка (детальная страница) ----
         self.full = function (params, onSuccess, onError) {
             var card = params.card || params;
-
             var method = detectMediaMethod(card);
             params.method = method;
             if (card && typeof card === 'object') {
@@ -246,7 +231,6 @@
                 fallbackFull({});
                 return;
             }
-
             if (card.id < 0) {
                 fallbackFull({});
                 return;
@@ -271,7 +255,7 @@
     }
 
     // ================================================================
-    //  ПУНКТ МЕНЮ (иконка + название V10)
+    //  МЕНЮ
     // ================================================================
     function addMenuItem() {
         if ($('.menu__item[data-action="v10"]').length) return;
@@ -301,9 +285,6 @@
         else $('.menu__list').append(item);
     }
 
-    // ================================================================
-    //  INIT
-    // ================================================================
     function init() {
         if (window.v10_plugin_ready) return;
         window.v10_plugin_ready = true;
