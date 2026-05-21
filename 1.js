@@ -490,7 +490,9 @@
 
                     '<svg height=\"36\" viewBox=\"0 0 24 24\" width=\"36\" fill=\"currentColor\">' +
 
-                        '<path d=\"M12 3L3 10V21H9V15H15V21H21V10L12 3ZM5 11L12 5.5L19 11V19H17V13H7V19H5V11ZM8 9H16V11H8V9Z\"/>' +
+                        '<!-- Дом с балконом -->' +
+                        '<path d="M12 2L2 8V20H8V14H16V20H22V8L12 2ZM4 10L12 6L20 10V18H17V12H7V18H4V10Z"/>' +
+                        '<path d="M9 13H15V15H9V13Z"/>' +
 
                     '</svg>' +
 
