@@ -16,7 +16,12 @@
         { title: 'Наши фильмы',                  url: 'movies_ru',            method: 'movie' },
         { title: 'Зарубежные сериалы',           url: 'tv_shows',             method: 'tv'    },
         { title: 'Русские сериалы',              url: 'tv_shows_ru',          method: 'tv'    },
-        { title: 'Русские детективные сериалы',  url: 'russian_detective_tv', method: 'tv'    },
+
+        // ============================================================
+        // НОВАЯ КАТЕГОРИЯ MAIL.RU DETECTIVE
+        // ============================================================
+        { title: 'Русские детективные сериалы',  url: 'russian_detective_tv', method: 'tv' },
+
         { title: 'Телевизор',                    url: 'televizor',            method: 'tv'    },
         { title: 'Юмор',                         url: 'humor',                method: 'tv'    }
     ];
@@ -25,10 +30,16 @@
     //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
     // ================================================================
     function buildImg(item) {
-        if (item.img && item.img.startsWith('http')) return item.img;
+
+        if (item.img && item.img.startsWith('http')) {
+            return item.img;
+        }
 
         if (item.poster_path) {
-            if (item.poster_path.startsWith('http')) return item.poster_path;
+
+            if (item.poster_path.startsWith('http')) {
+                return item.poster_path;
+            }
 
             if (item.poster_path.startsWith('/t/p/')) {
                 return 'https://image.tmdb.org' + item.poster_path;
@@ -41,6 +52,7 @@
     }
 
     function buildBg(item) {
+
         if (item.background_image && item.background_image.startsWith('http')) {
             return item.background_image;
         }
@@ -62,11 +74,13 @@
     }
 
     // ================================================================
-    //  ОПРЕДЕЛЕНИЕ ТИПА
+    //  DETECT MEDIA TYPE
     // ================================================================
     function detectMediaMethod(item) {
 
-        if (!item) return 'movie';
+        if (!item) {
+            return 'movie';
+        }
 
         if (
             item.method === 'tv' ||
@@ -82,7 +96,7 @@
     }
 
     // ================================================================
-    //  NORMALIZE
+    // NORMALIZE CARD
     // ================================================================
     function normalizeCard(item) {
 
@@ -113,28 +127,35 @@
         var method = item.method || detectMediaMethod(item);
 
         return {
+
             id: item.id,
 
             title: title,
+
             name: item.name || title,
+
             original_title: item.original_title || title,
 
             overview: item.overview || '',
 
             poster_path: posterPath,
+
             backdrop_path: backdropPath,
 
             img: img,
+
             background_image: bg,
 
             vote_average: item.vote_average || 0,
 
             release_date: item.release_date || '',
+
             first_air_date: item.first_air_date || '',
 
             number_of_seasons: item.number_of_seasons || undefined,
 
             type: method,
+
             method: method,
 
             release_quality: item.release_quality || '',
@@ -142,12 +163,13 @@
             source: SOURCE_NAME,
 
             promo_title: item.promo_title || title,
+
             promo: item.promo || item.overview || ''
         };
     }
 
     // ================================================================
-    //  API SERVICE
+    // API SERVICE
     // ================================================================
     function RutorApiService() {
 
