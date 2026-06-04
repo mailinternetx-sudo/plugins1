@@ -319,6 +319,79 @@
 
             var catUrl = params.url || 'top24';
 
+            // --------------------------------------------------------
+            // БЛОК: Русские детективные сериалы
+            // Агрегация из двух источников через воркер с пагинацией
+            // --------------------------------------------------------
+            if (catUrl === 'russian_detective_tv') {
+
+                var detUrl =
+                    WORKER_URL +
+                    'russian_detective_tv' +
+                    '?page=' + page +
+                    '&page_size=' + pageSize;
+
+                self.network.silent(
+
+                    detUrl,
+
+                    function (json) {
+
+                        if (!json || !json.results) {
+
+                            onComplete({
+                                results: [],
+                                page: page,
+                                total_pages: 1,
+                                total_results: 0
+                            });
+
+                            return;
+                        }
+
+                        // Нормализуем каждую карточку,
+                        // гарантируем type='tv' и source
+                        var cards = json.results.map(function (item) {
+
+                            var card = normalizeCard(item);
+
+                            card.type   = 'tv';
+                            card.method = 'tv';
+
+                            // Гарантируем first_air_date для
+                            // корректного матчинга Kinopoisk
+                            if (!card.first_air_date && card.release_date) {
+                                card.first_air_date = card.release_date;
+                            }
+
+                            return card;
+                        });
+
+                        onComplete({
+                            results:       cards,
+                            page:          json.page          || page,
+                            total_pages:   json.total_pages   || 1,
+                            total_results: json.total_results || cards.length
+                        });
+                    },
+
+                    function () {
+
+                        onComplete({
+                            results: [],
+                            page: page,
+                            total_pages: 1,
+                            total_results: 0
+                        });
+                    }
+                );
+
+                return; // выходим — остальная логика не нужна
+            }
+            // --------------------------------------------------------
+            // END БЛОК: Русские детективные сериалы
+            // --------------------------------------------------------
+
             var url =
                 WORKER_URL +
                 catUrl +
