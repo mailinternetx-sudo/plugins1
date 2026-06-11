@@ -12,14 +12,157 @@
     // ================================================================
     var CATEGORIES = [
         { title: 'Топ 24 часа',                  url: 'top24',                method: 'movie' },
-        { title: 'Зарубежные фильмы',            url: 'movies',               method: 'movie' },
+        { title: 'Зарубережные фильмы',            url: 'movies',               method: 'movie' },
         { title: 'Наши фильмы',                  url: 'movies_ru',            method: 'movie' },
-        { title: 'Зарубежные сериалы',           url: 'tv_shows',             method: 'tv'    },
+        { title: 'Зарубережные сериалы',           url: 'tv_shows',             method: 'tv'    },
         { title: 'Русские сериалы',              url: 'tv_shows_ru',          method: 'tv'    },
         { title: 'Русские детективные сериалы',  url: 'russian_detective_tv', method: 'tv'    },
         { title: 'Телевизор',                    url: 'televizor',            method: 'tv'    },
         { title: 'Юмор',                         url: 'humor',                method: 'tv'    }
     ];
+
+    // ================================================================
+    //  RUTOR PLUGIN - Дополнительный класс для работы с rutor.info
+    // ================================================================
+    const PLUGIN_ID = 'rutor-plugin';
+    const RUTOR_CATEGORIES = {
+        TOP_24H: 'Топ 24 часа',
+        OUR_MOVIES: 'Наши фильмы',
+        RUSSIAN_SERIES: 'Русские сериалы (Наши сериалы)',
+        FOREIGN_SERIES: 'Зарубережные сериалы',
+        TV: 'Телевизор',
+        HUMOR: 'Юмор'
+    };
+
+    class RutorPlugin {
+        constructor() {
+            this.items = {};
+            this.currentPage = {};
+            this.totalPages = {};
+        }
+
+        async load() {
+            await this._loadCategories();
+        }
+
+        async _loadCategories() {
+            for (const [key, category] of Object.entries(RUTOR_CATEGORIES)) {
+                this.items[key] = [];
+                this.currentPage[key] = 1;
+                this.totalPages[key] = 1;
+            }
+
+            await this._fetchRutorData();
+        }
+
+        async _fetchRutorData() {
+            try {
+                const response = await fetch(`https://rutor.info/top`);
+                const html = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+
+                // Извлечение данных для каждой категории
+                this._extractTop24h(doc);
+                this._extractOurMovies(doc);
+                this._extractRussianSeries(doc);
+                this._extractForeignSeries(doc);
+                this._extractTV(doc);
+                this._extractHumor(doc);
+            } catch (error) {
+                console.error('Ошибка при загрузке данных с rutor.info:', error);
+            }
+        }
+
+        _extractTop24h(doc) {
+            const rows = doc.querySelectorAll('table.tor-top tr');
+            const top24h = [];
+            for (let i = 1; i < Math.min(26, rows.length); i++) {
+                const nameCell = rows[i].querySelector('td:nth-child(2) a');
+                if (nameCell) {
+                    top24h.push(nameCell.textContent.trim());
+                }
+            }
+            this.items.TOP_24H = top24h;
+            this.totalPages.TOP_24H = Math.ceil(top24h.length / 25);
+        }
+
+        _extractOurMovies(doc) {
+            const rows = doc.querySelectorAll('table.tor-top tr');
+            const ourMovies = [];
+            for (let i = 1; i < Math.min(16, rows.length); i++) {
+                const nameCell = rows[i].querySelector('td:nth-child(2) a');
+                if (nameCell && nameCell.textContent.includes('Наши фильмы')) {
+                    ourMovies.push(nameCell.textContent.trim());
+                }
+            }
+            this.items.OUR_MOVIES = ourMovies;
+            this.totalPages.OUR_MOVIES = Math.ceil(ourMovies.length / 15);
+        }
+
+        _extractRussianSeries(doc) {
+            const rows = doc.querySelectorAll('table.tor-top tr');
+            const russianSeries = [];
+            for (let i = 1; i < Math.min(16, rows.length); i++) {
+                const nameCell = rows[i].querySelector('td:nth-child(2) a');
+                if (nameCell && nameCell.textContent.includes('Наши сериалы')) {
+                    russianSeries.push(nameCell.textContent.trim());
+                }
+            }
+            this.items.RUSSIAN_SERIES = russianSeries;
+            this.totalPages.RUSSIAN_SERIES = Math.ceil(russianSeries.length / 15);
+        }
+
+        _extractForeignSeries(doc) {
+            const rows = doc.querySelectorAll('table.tor-top tr');
+            const foreignSeries = [];
+            for (let i = 1; i < Math.min(16, rows.length); i++) {
+                const nameCell = rows[i].querySelector('td:nth-child(2) a');
+                if (nameCell && nameCell.textContent.includes('Зарубережные сериалы')) {
+                    foreignSeries.push(nameCell.textContent.trim());
+                }
+            }
+            this.items.FOREIGN_SERIES = foreignSeries;
+            this.totalPages.FOREIGN_SERIES = Math.ceil(foreignSeries.length / 15);
+        }
+
+        _extractTV(doc) {
+            const rows = doc.querySelectorAll('table.tor-top tr');
+            const tv = [];
+            for (let i = 1; i < Math.min(16, rows.length); i++) {
+                const nameCell = rows[i].querySelector('td:nth-child(2) a');
+                if (nameCell && nameCell.textContent.includes('Телевизор')) {
+                    tv.push(nameCell.textContent.trim());
+                }
+            }
+            this.items.TV = tv;
+            this.totalPages.TV = Math.ceil(tv.length / 15);
+        }
+
+        _extractHumor(doc) {
+            const rows = doc.querySelectorAll('table.tor-top tr');
+            const humor = [];
+            for (let i = 1; i < Math.min(16, rows.length); i++) {
+                const nameCell = rows[i].querySelector('td:nth-child(2) a');
+                if (nameCell && nameCell.textContent.includes('Юмор')) {
+                    humor.push(nameCell.textContent.trim());
+                }
+            }
+            this.items.HUMOR = humor;
+            this.totalPages.HUMOR = Math.ceil(humor.length / 15);
+        }
+
+        getItems(category, page = 1) {
+            const itemsPerPage = category === 'TOP_24H' ? 25 : 15;
+            const startIndex = (page - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            return this.items[category].slice(startIndex, endIndex);
+        }
+
+        getTotalPages(category) {
+            return this.totalPages[category];
+        }
+    }
 
     // ================================================================
     //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
@@ -539,6 +682,11 @@
         window.v10_plugin_ready = true;
 
         Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
+
+        // Инициализация Rutor Plugin
+        if (window.Lampa && window.Lampa.Plugin) {
+            window.Lampa.Plugin.register(PLUGIN_ID, new RutorPlugin());
+        }
 
         Lampa.Listener.follow('app', function (e) {
 
