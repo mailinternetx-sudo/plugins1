@@ -8,6 +8,14 @@
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
 
     // ================================================================
+    //  CACHE И КОНФИГУРАЦИЯ RUTOR PLUGIN
+    // ================================================================
+    const CACHE_TTL = 3600; // 1 час в секундах
+    const CACHE_NAME = 'RUTOR_PLUGIN_CACHE';
+    const TMDB_API_KEY = 'YOUR_TMDB_API_KEY';
+    const KINOPOISK_API_KEY = 'YOUR_KINOPOISK_API_KEY';
+
+    // ================================================================
     //  КАТЕГОРИИ
     // ================================================================
     var CATEGORIES = [
@@ -22,145 +30,262 @@
     ];
 
     // ================================================================
-    //  RUTOR PLUGIN - Дополнительный класс для работы с rutor.info
+    //  RUTOR PLUGIN КАТЕГОРИИ
     // ================================================================
-    const PLUGIN_ID = 'rutor-plugin';
     const RUTOR_CATEGORIES = {
-        TOP_24H: 'Топ 24 часа',
-        OUR_MOVIES: 'Наши фильмы',
-        RUSSIAN_SERIES: 'Русские сериалы (Наши сериалы)',
-        FOREIGN_SERIES: 'Зарубережные сериалы',
-        TV: 'Телевизор',
-        HUMOR: 'Юмор'
+        TOP_24H: {
+            name: 'Топ 24 часа',
+            itemsPerPage: 25,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Топ торренты за последние 24 часа',
+            maxItems: 25,
+            searchPriority: ['TMDB']
+        },
+        OUR_MOVIES: {
+            name: 'Наши фильмы',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Наши фильмы',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk', 'TMDB']
+        },
+        RUSSIAN_SERIES: {
+            name: 'Русские сериалы (Наши сериалы)',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Наши сериалы',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk', 'TMDB']
+        },
+        FOREIGN_SERIES: {
+            name: 'Зарубережные сериалы',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Зарубережные сериалы',
+            maxItems: 15,
+            searchPriority: ['TMDB', 'Kinopoisk']
+        },
+        TV: {
+            name: 'Телевизор',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Телевизор',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk']
+        },
+        HUMOR: {
+            name: 'Юмор',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Юмор',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk']
+        },
+        RUSSIAN_DETECTIVE_SERIES: {
+            name: 'Русские детективные сериалы',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/search/0/16/010/0/%D0%94%D0%B5%D1%82%D0%B5%D0%BA%D1%82%D0%B8%D0%B2',
+            rutorCategory: '',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk']
+        }
     };
 
+    // ================================================================
+    //  RUTOR PLUGIN CLASS
+    // ================================================================
     class RutorPlugin {
         constructor() {
+            this.cache = {};
             this.items = {};
-            this.currentPage = {};
             this.totalPages = {};
         }
 
-        async load() {
-            await this._loadCategories();
-        }
-
-        async _loadCategories() {
-            for (const [key, category] of Object.entries(RUTOR_CATEGORIES)) {
-                this.items[key] = [];
-                this.currentPage[key] = 1;
-                this.totalPages[key] = 1;
-            }
-
-            await this._fetchRutorData();
-        }
-
-        async _fetchRutorData() {
+        // Инициализация плагина
+        async initialize() {
             try {
-                const response = await fetch(`https://rutor.info/top`);
-                const html = await response.text();
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-
-                // Извлечение данных для каждой категории
-                this._extractTop24h(doc);
-                this._extractOurMovies(doc);
-                this._extractRussianSeries(doc);
-                this._extractForeignSeries(doc);
-                this._extractTV(doc);
-                this._extractHumor(doc);
+                const data = await this._getAllCategoriesData();
+                this.items = data.items;
+                this.totalPages = data.totalPages;
             } catch (error) {
-                console.error('Ошибка при загрузке данных с rutor.info:', error);
+                console.error('[RutorPlugin] Ошибка инициализации:', error);
             }
         }
 
-        _extractTop24h(doc) {
-            const rows = doc.querySelectorAll('table.tor-top tr');
-            const top24h = [];
-            for (let i = 1; i < Math.min(26, rows.length); i++) {
-                const nameCell = rows[i].querySelector('td:nth-child(2) a');
-                if (nameCell) {
-                    top24h.push(nameCell.textContent.trim());
+        // Получение данных всех категорий
+        async _getAllCategoriesData() {
+            const data = {
+                items: {},
+                totalPages: {}
+            };
+
+            for (const [key, category] of Object.entries(RUTOR_CATEGORIES)) {
+                try {
+                    const categoryData = await this._getCategoryData(key, category);
+                    data.items[key] = categoryData.items;
+                    data.totalPages[key] = categoryData.totalPages;
+                } catch (error) {
+                    console.error(`[RutorPlugin] Ошибка при загрузке категории ${key}:`, error);
+                    data.items[key] = [];
+                    data.totalPages[key] = 1;
                 }
             }
-            this.items.TOP_24H = top24h;
-            this.totalPages.TOP_24H = Math.ceil(top24h.length / 25);
+
+            return data;
         }
 
-        _extractOurMovies(doc) {
-            const rows = doc.querySelectorAll('table.tor-top tr');
-            const ourMovies = [];
-            for (let i = 1; i < Math.min(16, rows.length); i++) {
-                const nameCell = rows[i].querySelector('td:nth-child(2) a');
-                if (nameCell && nameCell.textContent.includes('Наши фильмы')) {
-                    ourMovies.push(nameCell.textContent.trim());
+        // Получение данных для одной категории
+        async _getCategoryData(categoryKey, category) {
+            const cacheKey = `rutor_${categoryKey}`;
+
+            // Проверяем кэш в памяти
+            if (this.cache[cacheKey]) {
+                const cachedData = this.cache[cacheKey];
+                if (Date.now() - cachedData.timestamp < CACHE_TTL * 1000) {
+                    return cachedData.data;
                 }
             }
-            this.items.OUR_MOVIES = ourMovies;
-            this.totalPages.OUR_MOVIES = Math.ceil(ourMovies.length / 15);
+
+            try {
+                const response = await fetch(category.rutorUrl);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const html = await response.text();
+                const items = this._extractCategoryItems(html, category, categoryKey);
+
+                const totalPages = Math.ceil(items.length / category.itemsPerPage);
+                const result = {
+                    items,
+                    totalPages
+                };
+
+                // Сохранение в памяти кэш
+                this.cache[cacheKey] = {
+                    data: result,
+                    timestamp: Date.now()
+                };
+
+                return result;
+            } catch (error) {
+                console.error(`[RutorPlugin] Ошибка при загрузке категории ${categoryKey}:`, error);
+                return {
+                    items: [],
+                    totalPages: 1
+                };
+            }
         }
 
-        _extractRussianSeries(doc) {
-            const rows = doc.querySelectorAll('table.tor-top tr');
-            const russianSeries = [];
-            for (let i = 1; i < Math.min(16, rows.length); i++) {
-                const nameCell = rows[i].querySelector('td:nth-child(2) a');
-                if (nameCell && nameCell.textContent.includes('Наши сериалы')) {
-                    russianSeries.push(nameCell.textContent.trim());
+        // Извлечение элементов категории из HTML
+        _extractCategoryItems(html, category, categoryKey) {
+            const items = [];
+            
+            // Простой парсинг HTML (без внешних библиотек)
+            const parser = new DOMParser();
+            try {
+                const doc = parser.parseFromString(html, 'text/html');
+                const rows = doc.querySelectorAll('table.tor-top tr, table.tor-t tr');
+
+                rows.forEach((el, i) => {
+                    if (i === 0) return; // Пропускаем заголовок
+                    const nameCell = el.querySelector('td:nth-child(2) a');
+                    if (nameCell) {
+                        const name = nameCell.textContent.trim();
+                        if (name && items.length < category.maxItems) {
+                            if (categoryKey === 'TOP_24H' || 
+                                !category.rutorCategory || 
+                                name.includes(category.rutorCategory)) {
+                                items.push(name);
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('[RutorPlugin] Ошибка парсинга HTML:', error);
+            }
+
+            return items;
+        }
+
+        // Поиск в TMDB API
+        async _searchInTMDB(query, isTV = false) {
+            const year = this._extractYear(query);
+            const queryWithYear = year ? `${query} ${year}` : query;
+            const endpoint = isTV ? 'tv' : 'movie';
+            const url = `https://api.themoviedb.org/3/search/${endpoint}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(queryWithYear)}`;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const data = await response.json();
+                return data.results && data.results.length > 0 ? data.results[0] : null;
+            } catch (error) {
+                console.error(`[RutorPlugin] Ошибка поиска в TMDB:`, error);
+                return null;
+            }
+        }
+
+        // Поиск в Kinopoisk API
+        async _searchInKinopoisk(query) {
+            const url = `https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(query)}`;
+
+            try {
+                const response = await fetch(url, {
+                    headers: { 'X-API-KEY': KINOPOISK_API_KEY }
+                });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const data = await response.json();
+                return data.films && data.films.length > 0 ? data.films[0] : null;
+            } catch (error) {
+                console.error(`[RutorPlugin] Ошибка поиска в Kinopoisk:`, error);
+                return null;
+            }
+        }
+
+        // Получение информации о карточке
+        async getCardInfo(title, categoryKey) {
+            const { searchPriority } = RUTOR_CATEGORIES[categoryKey] || { searchPriority: ['TMDB'] };
+            const isTV = RUTOR_CATEGORIES[categoryKey]?.name.includes('сериал') || false;
+
+            // Ищем в API по приоритету
+            for (const api of searchPriority) {
+                try {
+                    let result = null;
+                    if (api === 'TMDB') {
+                        result = await this._searchInTMDB(title, isTV);
+                    } else if (api === 'Kinopoisk') {
+                        result = await this._searchInKinopoisk(title);
+                    }
+
+                    if (result) return result;
+                } catch (error) {
+                    console.error(`[RutorPlugin] Ошибка при поиске в ${api}:`, error);
                 }
             }
-            this.items.RUSSIAN_SERIES = russianSeries;
-            this.totalPages.RUSSIAN_SERIES = Math.ceil(russianSeries.length / 15);
+
+            return null;
         }
 
-        _extractForeignSeries(doc) {
-            const rows = doc.querySelectorAll('table.tor-top tr');
-            const foreignSeries = [];
-            for (let i = 1; i < Math.min(16, rows.length); i++) {
-                const nameCell = rows[i].querySelector('td:nth-child(2) a');
-                if (nameCell && nameCell.textContent.includes('Зарубережные сериалы')) {
-                    foreignSeries.push(nameCell.textContent.trim());
-                }
-            }
-            this.items.FOREIGN_SERIES = foreignSeries;
-            this.totalPages.FOREIGN_SERIES = Math.ceil(foreignSeries.length / 15);
+        // Извлечение года из названия
+        _extractYear(title) {
+            const yearMatch = title.match(/\((\d{4})\)|(\d{4})/);
+            return yearMatch ? yearMatch[1] || yearMatch[2] : null;
         }
 
-        _extractTV(doc) {
-            const rows = doc.querySelectorAll('table.tor-top tr');
-            const tv = [];
-            for (let i = 1; i < Math.min(16, rows.length); i++) {
-                const nameCell = rows[i].querySelector('td:nth-child(2) a');
-                if (nameCell && nameCell.textContent.includes('Телевизор')) {
-                    tv.push(nameCell.textContent.trim());
-                }
-            }
-            this.items.TV = tv;
-            this.totalPages.TV = Math.ceil(tv.length / 15);
-        }
-
-        _extractHumor(doc) {
-            const rows = doc.querySelectorAll('table.tor-top tr');
-            const humor = [];
-            for (let i = 1; i < Math.min(16, rows.length); i++) {
-                const nameCell = rows[i].querySelector('td:nth-child(2) a');
-                if (nameCell && nameCell.textContent.includes('Юмор')) {
-                    humor.push(nameCell.textContent.trim());
-                }
-            }
-            this.items.HUMOR = humor;
-            this.totalPages.HUMOR = Math.ceil(humor.length / 15);
-        }
-
+        // Получение элементов категории с пагинацией
         getItems(category, page = 1) {
-            const itemsPerPage = category === 'TOP_24H' ? 25 : 15;
+            if (!this.items || !this.items[category]) {
+                return [];
+            }
+            const { itemsPerPage } = RUTOR_CATEGORIES[category];
             const startIndex = (page - 1) * itemsPerPage;
             const endIndex = startIndex + itemsPerPage;
             return this.items[category].slice(startIndex, endIndex);
         }
 
+        // Получение общего количества страниц для категории
         getTotalPages(category) {
-            return this.totalPages[category];
+            return this.totalPages[category] || 1;
         }
     }
 
@@ -675,6 +800,8 @@
     // ================================================================
     // INIT
     // ================================================================
+    var rutorPlugin = null;
+
     function init() {
 
         if (window.v10_plugin_ready) return;
@@ -684,9 +811,12 @@
         Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
 
         // Инициализация Rutor Plugin
-        if (window.Lampa && window.Lampa.Plugin) {
-            window.Lampa.Plugin.register(PLUGIN_ID, new RutorPlugin());
-        }
+        rutorPlugin = new RutorPlugin();
+        rutorPlugin.initialize().then(function() {
+            console.log('[V10] Rutor Plugin инициализирован');
+        }).catch(function(error) {
+            console.error('[V10] Ошибка инициализации Rutor Plugin:', error);
+        });
 
         Lampa.Listener.follow('app', function (e) {
 
