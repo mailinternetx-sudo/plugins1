@@ -12,8 +12,8 @@
     // ================================================================
     const CACHE_TTL = 3600; // 1 час в секундах
     const CACHE_NAME = 'RUTOR_PLUGIN_CACHE';
-    const TMDB_API_KEY = 'YOUR_TMDB_API_KEY';
-    const KINOPOISK_API_KEY = 'YOUR_KINOPOISK_API_KEY';
+    const TMDB_API_KEY = 'f348b4586d1791a40d99edd92164cb86';
+    const KINOPOISK_API_KEY = 'JVGPMHQ-40AMAHD-MG87Z21-R490RWA';
 
     // ================================================================
     //  КАТЕГОРИИ
