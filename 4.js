@@ -12,10 +12,10 @@
     // ================================================================
     var CATEGORIES = [
         { title: 'Топ 24 часа',                  url: 'top24',                method: 'movie' },
-        { title: 'Зарубежные фильмы',            url: 'movies',               method: 'movie' },
-        { title: 'Наши фильмы',                  url: 'movies_ru',            method: 'movie' },
-        { title: 'Зарубежные сериалы',           url: 'tv_shows',             method: 'tv'    },
-        { title: 'Русские сериалы (Наши сериалы)', url: 'tv_shows_ru',        method: 'tv'    },
+        { title: 'Зарубежные фильмы',            url: 'kino',                 method: 'movie' },
+        { title: 'Наши фильмы',                  url: 'nashe_kino',           method: 'movie' },
+        { title: 'Зарубежные сериалы',           url: 'seriali',              method: 'tv'    },
+        { title: 'Русские сериалы',              url: 'nashi_seriali',        method: 'tv'    },
         { title: 'Русские детективные сериалы',  url: 'russian_detective_tv', method: 'tv'    },
         { title: 'Телевизор',                    url: 'televizor',            method: 'tv'    },
         { title: 'Юмор',                         url: 'humor',                method: 'tv'    }
@@ -153,7 +153,7 @@
 
         self.list = function (params, onComplete) {
             var page = params.page || 1;
-            var pageSize = params.page_size || 30;
+            var pageSize = params.page_size || 20;
             var catUrl = params.url || 'top24';
             var url = WORKER_URL + catUrl + '?page=' + page + '&page_size=' + pageSize;
             self._fetchRaw(url, function (data) {
