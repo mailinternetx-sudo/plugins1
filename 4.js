@@ -2,10 +2,13 @@
     'use strict';
 
     var SOURCE_NAME = 'V10';
-    var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/'; // замените на реальный адрес вашего worker'а
+    var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
     var TMDB_BG  = 'https://image.tmdb.org/t/p/original';
+
+    const CACHE_TTL = 3600;
+    const CACHE_NAME = 'RUTOR_PLUGIN_CACHE';
 
     // ================================================================
     //  КАТЕГОРИИ (синхронизированы с worker.js)
@@ -20,6 +23,68 @@
         { title: 'Телевизор',                    url: 'televizor',            method: 'tv'    },
         { title: 'Юмор',                         url: 'humor',                method: 'tv'    }
     ];
+
+    // ================================================================
+    // RUTOR PLUGIN КАТЕГОРИИ (для внутреннего использования)
+    // ================================================================
+    const RUTOR_CATEGORIES = {
+        TOP_24H: {
+            name: 'Топ 24 часа',
+            itemsPerPage: 25,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Топ торренты за последние 24 часа',
+            maxItems: 25,
+            searchPriority: ['TMDB']
+        },
+        OUR_MOVIES: {
+            name: 'Наши фильмы',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Наши фильмы',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk', 'TMDB']
+        },
+        RUSSIAN_SERIES: {
+            name: 'Русские сериалы',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Наши сериалы',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk', 'TMDB']
+        },
+        FOREIGN_SERIES: {
+            name: 'Зарубежные сериалы',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Зарубежные сериалы',
+            maxItems: 15,
+            searchPriority: ['TMDB', 'Kinopoisk']
+        },
+        TV: {
+            name: 'Телевизор',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Телевизор',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk']
+        },
+        HUMOR: {
+            name: 'Юмор',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/top',
+            rutorCategory: 'Самые популярные торренты в категории Юмор',
+            maxItems: 15,
+            searchPriority: ['Kinopoisk']
+        },
+        RUSSIAN_DETECTIVE_SERIES: {
+            name: 'Русские детективные сериалы',
+            itemsPerPage: 15,
+            rutorUrl: 'https://rutor.info/search/0/16/010/0/%D0%94%D0%B5%D1%82%D0%B5%D0%BA%D1%82%D0%B8%D0%B2',
+            rutorCategory: '',
+            maxItems: 30,
+            searchPriority: ['Kinopoisk']
+        }
+    };
 
     // ================================================================
     //  УТИЛИТЫ ДЛЯ ПОСТЕРОВ
@@ -80,6 +145,155 @@
             promo_title: item.promo_title || title,
             promo: item.promo || item.overview || ''
         };
+    }
+
+    // ================================================================
+    //  RUTOR PLUGIN CLASS
+    // ================================================================
+    class RutorPlugin {
+        constructor() {
+            this.cache = {};
+            this.items = {};
+            this.totalPages = {};
+        }
+
+        async initialize() {
+            try {
+                const data = await this._getAllCategoriesData();
+                this.items = data.items;
+                this.totalPages = data.totalPages;
+            } catch (error) {
+                console.error('[RutorPlugin] Ошибка инициализации:', error);
+            }
+        }
+
+        async _getAllCategoriesData() {
+            const data = { items: {}, totalPages: {} };
+
+            for (const [key, category] of Object.entries(RUTOR_CATEGORIES)) {
+                try {
+                    const categoryData = await this._getCategoryData(key, category);
+                    data.items[key] = categoryData.items;
+                    data.totalPages[key] = categoryData.totalPages;
+                } catch (error) {
+                    console.error(`[RutorPlugin] Ошибка категории ${key}:`, error);
+                    data.items[key] = [];
+                    data.totalPages[key] = 1;
+                }
+            }
+            return data;
+        }
+
+        async _getCategoryData(categoryKey, category) {
+            const cacheKey = `rutor_${categoryKey}`;
+            if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < CACHE_TTL * 1000) {
+                return this.cache[cacheKey].data;
+            }
+
+            try {
+                const response = await fetch(category.rutorUrl);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const html = await response.text();
+
+                let items = this._extractCategoryItems(html, category, categoryKey);
+
+                // Для детективов — дополнительная фильтрация
+                if (categoryKey === 'RUSSIAN_DETECTIVE_SERIES') {
+                    items = items.filter(t => /детектив|триллер|криминал/i.test(t));
+                }
+
+                const totalPages = Math.ceil(items.length / category.itemsPerPage);
+                const result = { items, totalPages };
+
+                this.cache[cacheKey] = { data: result, timestamp: Date.now() };
+                return result;
+            } catch (error) {
+                console.error(`[RutorPlugin] Ошибка загрузки ${categoryKey}:`, error);
+                return { items: [], totalPages: 1 };
+            }
+        }
+
+        _extractCategoryItems(html, category, categoryKey) {
+            const items = [];
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const rows = doc.querySelectorAll('table.tor-top tr, table.tor-t tr');
+
+            rows.forEach((el, i) => {
+                if (i === 0) return;
+                const nameCell = el.querySelector('td:nth-child(2) a');
+                if (!nameCell) return;
+
+                const name = nameCell.textContent.trim();
+                if (!name) return;
+
+                // Фильтрация по секции
+                if (categoryKey === 'TOP_24H' || 
+                    !category.rutorCategory || 
+                    name.includes(category.rutorCategory) || 
+                    el.textContent.includes(category.rutorCategory)) {
+                    if (items.length < category.maxItems) {
+                        items.push(name);
+                    }
+                }
+            });
+
+            return items;
+        }
+
+        async getCardInfo(title, categoryKey) {
+            const cat = RUTOR_CATEGORIES[categoryKey] || { searchPriority: ['TMDB'] };
+            const isTV = ['RUSSIAN_SERIES', 'RUSSIAN_DETECTIVE_SERIES', 'TV', 'HUMOR', 'FOREIGN_SERIES'].includes(categoryKey);
+
+            for (const api of cat.searchPriority) {
+                try {
+                    if (api === 'TMDB') {
+                        const result = await this._searchInTMDB(title, isTV);
+                        if (result) return result;
+                    } else if (api === 'Kinopoisk') {
+                        const result = await this._searchInKinopoisk(title);
+                        if (result) return result;
+                    }
+                } catch (e) {}
+            }
+            return null;
+        }
+
+        async _searchInTMDB(query, isTV = false) {
+            const year = this._extractYear(query);
+            const q = year ? `${query.replace(/ \(\d{4}\)/, '')} ${year}` : query;
+            const endpoint = isTV ? 'tv' : 'movie';
+            const url = `https://api.themoviedb.org/3/search/${endpoint}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=ru-RU`;
+
+            const res = await fetch(url);
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data.results?.[0] || null;
+        }
+
+        async _searchInKinopoisk(query) {
+            const url = `https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(query)}`;
+            const res = await fetch(url, { headers: { 'X-API-KEY': KINOPOISK_API_KEY } });
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data.films?.[0] || null;
+        }
+
+        _extractYear(title) {
+            const m = title.match(/\((\d{4})\)/);
+            return m ? m[1] : null;
+        }
+
+        getItems(category, page = 1) {
+            if (!this.items[category]) return [];
+            const { itemsPerPage } = RUTOR_CATEGORIES[category];
+            const start = (page - 1) * itemsPerPage;
+            return this.items[category].slice(start, start + itemsPerPage);
+        }
+
+        getTotalPages(category) {
+            return this.totalPages[category] || 1;
+        }
     }
 
     // ================================================================
@@ -231,12 +445,21 @@
     // ================================================================
     //  ИНИЦИАЛИЗАЦИЯ
     // ================================================================
+    var rutorPlugin = null;
+
     function init() {
         if (window.v10_plugin_ready) return;
         window.v10_plugin_ready = true;
+
         Lampa.Api.sources[SOURCE_NAME] = new RutorApiService();
+
+        rutorPlugin = new RutorPlugin();
+        rutorPlugin.initialize().then(() => {
+            console.log('[V10] Rutor Plugin инициализирован');
+        });
+
         Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready' || e.type === 'render') setTimeout(addMenuItem, 1000);
+            if (e.type === 'ready' || e.type === 'render') setTimeout(addMenuItem, 800);
         });
         setTimeout(addMenuItem, 2000);
     }
