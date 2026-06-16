@@ -20,9 +20,9 @@
     // ================================================================
     var CATEGORIES = [
         { title: 'Топ 24 часа',                  url: 'top24',                method: 'movie' },
-        { title: 'Зарубережные фильмы',            url: 'movies',               method: 'movie' },
+        { title: 'Зарубежные фильмы',            url: 'movies',               method: 'movie' },
         { title: 'Наши фильмы',                  url: 'movies_ru',            method: 'movie' },
-        { title: 'Зарубережные сериалы',           url: 'tv_shows',             method: 'tv'    },
+        { title: 'Зарубежные сериалы',           url: 'tv_shows',             method: 'tv'    },
         { title: 'Русские сериалы',              url: 'tv_shows_ru',          method: 'tv'    },
         { title: 'Русские детективные сериалы',  url: 'russian_detective_tv', method: 'tv'    },
         { title: 'Телевизор',                    url: 'televizor',            method: 'tv'    },
@@ -50,7 +50,7 @@
             searchPriority: ['Kinopoisk', 'TMDB']
         },
         RUSSIAN_SERIES: {
-            name: 'Русские сериалы (Наши сериалы)',
+            name: 'Русские сериалы',
             itemsPerPage: 15,
             rutorUrl: 'https://rutor.info/top',
             rutorCategory: 'Самые популярные торренты в категории Наши сериалы',
@@ -58,10 +58,10 @@
             searchPriority: ['Kinopoisk', 'TMDB']
         },
         FOREIGN_SERIES: {
-            name: 'Зарубережные сериалы',
+            name: 'Зарубежные сериалы',
             itemsPerPage: 15,
             rutorUrl: 'https://rutor.info/top',
-            rutorCategory: 'Самые популярные торренты в категории Зарубережные сериалы',
+            rutorCategory: 'Самые популярные торренты в категории Зарубежные сериалы',
             maxItems: 15,
             searchPriority: ['TMDB', 'Kinopoisk']
         },
@@ -86,7 +86,7 @@
             itemsPerPage: 15,
             rutorUrl: 'https://rutor.info/search/0/16/010/0/%D0%94%D0%B5%D1%82%D0%B5%D0%BA%D1%82%D0%B8%D0%B2',
             rutorCategory: '',
-            maxItems: 15,
+            maxItems: 30,
             searchPriority: ['Kinopoisk']
         }
     };
@@ -107,6 +107,7 @@
                 const data = await this._getAllCategoriesData();
                 this.items = data.items;
                 this.totalPages = data.totalPages;
+                console.log('[V10] Rutor Plugin успешно инициализирован');
             } catch (error) {
                 console.error('[RutorPlugin] Ошибка инициализации:', error);
             }
@@ -139,11 +140,8 @@
             const cacheKey = `rutor_${categoryKey}`;
 
             // Проверяем кэш в памяти
-            if (this.cache[cacheKey]) {
-                const cachedData = this.cache[cacheKey];
-                if (Date.now() - cachedData.timestamp < CACHE_TTL * 1000) {
-                    return cachedData.data;
-                }
+            if (this.cache[cacheKey] && Date.now() - this.cache[cacheKey].timestamp < CACHE_TTL * 1000) {
+                return this.cache[cacheKey].data;
             }
 
             try {
@@ -152,7 +150,13 @@
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const html = await response.text();
-                const items = this._extractCategoryItems(html, category, categoryKey);
+
+                let items = this._extractCategoryItems(html, category, categoryKey);
+
+                // Фильтрация для детективных сериалов
+                if (categoryKey === 'RUSSIAN_DETECTIVE_SERIES') {
+                    items = items.filter(t => /детектив|триллер|криминал/i.test(t));
+                }
 
                 const totalPages = Math.ceil(items.length / category.itemsPerPage);
                 const result = {
@@ -189,14 +193,18 @@
                 rows.forEach((el, i) => {
                     if (i === 0) return; // Пропускаем заголовок
                     const nameCell = el.querySelector('td:nth-child(2) a');
-                    if (nameCell) {
-                        const name = nameCell.textContent.trim();
-                        if (name && items.length < category.maxItems) {
-                            if (categoryKey === 'TOP_24H' || 
-                                !category.rutorCategory || 
-                                name.includes(category.rutorCategory)) {
-                                items.push(name);
-                            }
+                    if (!nameCell) return;
+
+                    const name = nameCell.textContent.trim();
+                    if (!name || name.length < 3) return;
+
+                    const rowText = el.textContent;
+
+                    if (categoryKey === 'TOP_24H' || 
+                        !category.rutorCategory || 
+                        rowText.includes(category.rutorCategory)) {
+                        if (items.length < category.maxItems) {
+                            items.push(name);
                         }
                     }
                 });
@@ -210,17 +218,18 @@
         // Поиск в TMDB API
         async _searchInTMDB(query, isTV = false) {
             const year = this._extractYear(query);
-            const queryWithYear = year ? `${query} ${year}` : query;
+            const cleanQuery = query.replace(/ \(\d{4}\)/, '');
+            const q = year ? `${cleanQuery} ${year}` : cleanQuery;
             const endpoint = isTV ? 'tv' : 'movie';
-            const url = `https://api.themoviedb.org/3/search/${endpoint}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(queryWithYear)}`;
+            const url = `https://api.themoviedb.org/3/search/${endpoint}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=ru-RU`;
 
             try {
                 const response = await fetch(url);
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                if (!response.ok) return null;
                 const data = await response.json();
                 return data.results && data.results.length > 0 ? data.results[0] : null;
             } catch (error) {
-                console.error(`[RutorPlugin] Ошибка поиска в TMDB:`, error);
+                console.error(`[V10] TMDB error:`, error);
                 return null;
             }
         }
@@ -233,22 +242,22 @@
                 const response = await fetch(url, {
                     headers: { 'X-API-KEY': KINOPOISK_API_KEY }
                 });
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                if (!response.ok) return null;
                 const data = await response.json();
                 return data.films && data.films.length > 0 ? data.films[0] : null;
             } catch (error) {
-                console.error(`[RutorPlugin] Ошибка поиска в Kinopoisk:`, error);
+                console.error(`[V10] Kinopoisk error:`, error);
                 return null;
             }
         }
 
         // Получение информации о карточке
         async getCardInfo(title, categoryKey) {
-            const { searchPriority } = RUTOR_CATEGORIES[categoryKey] || { searchPriority: ['TMDB'] };
-            const isTV = RUTOR_CATEGORIES[categoryKey]?.name.includes('сериал') || false;
+            const cat = RUTOR_CATEGORIES[categoryKey] || { searchPriority: ['TMDB'] };
+            const isTV = ['RUSSIAN_SERIES', 'RUSSIAN_DETECTIVE_SERIES', 'TV', 'HUMOR', 'FOREIGN_SERIES'].includes(categoryKey);
 
             // Ищем в API по приоритету
-            for (const api of searchPriority) {
+            for (const api of cat.searchPriority) {
                 try {
                     let result = null;
                     if (api === 'TMDB') {
@@ -259,7 +268,7 @@
 
                     if (result) return result;
                 } catch (error) {
-                    console.error(`[RutorPlugin] Ошибка при поиске в ${api}:`, error);
+                    console.warn(`[V10] Ошибка поиска в ${api}`);
                 }
             }
 
@@ -268,8 +277,8 @@
 
         // Извлечение года из названия
         _extractYear(title) {
-            const yearMatch = title.match(/\((\d{4})\)|(\d{4})/);
-            return yearMatch ? yearMatch[1] || yearMatch[2] : null;
+            const match = title.match(/\((\d{4})\)/);
+            return match ? match[1] : null;
         }
 
         // Получение элементов категории с пагинацией
@@ -357,26 +366,6 @@
         var img = buildImg(item);
         var bg  = buildBg(item);
 
-        var posterPath = item.poster_path || '';
-
-        if (
-            posterPath &&
-            !posterPath.startsWith('/t/p/') &&
-            !posterPath.startsWith('http')
-        ) {
-            posterPath = '/t/p/w500' + posterPath;
-        }
-
-        var backdropPath = item.backdrop_path || '';
-
-        if (
-            backdropPath &&
-            !backdropPath.startsWith('/t/p/') &&
-            !backdropPath.startsWith('http')
-        ) {
-            backdropPath = '/t/p/original' + backdropPath;
-        }
-
         var title  = item.title || item.name || '';
         var method = item.method || detectMediaMethod(item);
 
@@ -389,8 +378,8 @@
 
             overview: item.overview || '',
 
-            poster_path: posterPath,
-            backdrop_path: backdropPath,
+            poster_path: item.poster_path || '',
+            backdrop_path: item.backdrop_path || '',
 
             img: img,
             background_image: bg,
@@ -400,7 +389,7 @@
             release_date: item.release_date || '',
             first_air_date: item.first_air_date || '',
 
-            number_of_seasons: item.number_of_seasons || undefined,
+            number_of_seasons: item.number_of_seasons,
 
             type: method,
             method: method,
@@ -409,8 +398,8 @@
 
             source: SOURCE_NAME,
 
-            promo_title: item.promo_title || title,
-            promo: item.promo || item.overview || ''
+            promo_title: title,
+            promo: item.overview || ''
         };
     }
 
@@ -508,7 +497,7 @@
 
                     onComplete({
 
-                        results: json.results.map(normalizeCard),
+                        results: (json.results || []).map(normalizeCard),
 
                         page: json.page || 1,
 
@@ -544,7 +533,7 @@
 
                         title: cat.title,
 
-                        results: data.results,
+                        results: (data.results || []).map(normalizeCard),
 
                         url: cat.url,
 
@@ -601,7 +590,7 @@
 
                     onComplete({
 
-                        results: data.results,
+                        results: (data.results || []).map(normalizeCard),
 
                         page: data.page,
 
@@ -748,17 +737,16 @@
     // ================================================================
     function addMenuItem() {
 
-        if ($('.menu__item[data-action=\"v10\"]').length) return;
+        if ($('.menu__item[data-action="v10"]').length) return;
 
         var item = $(
 
-            '<li class=\"menu__item selector\" data-action=\"v10\">' +
+            '<li class="menu__item selector" data-action="v10">' +
 
-                '<div class=\"menu__ico\">' +
+                '<div class="menu__ico">' +
 
-                    '<svg height=\"36\" viewBox=\"0 0 24 24\" width=\"36\" fill=\"currentColor\">' +
+                    '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor">' +
 
-                        '<!-- Дом с балконом -->' +
                         '<path d="M12 2L2 8V20H8V14H16V20H22V8L12 2ZM4 10L12 6L20 10V18H17V12H7V18H4V10Z"/>' +
                         '<path d="M9 13H15V15H9V13Z"/>' +
 
@@ -766,7 +754,7 @@
 
                 '</div>' +
 
-                '<div class=\"menu__text\">' +
+                '<div class="menu__text">' +
                     SOURCE_NAME +
                 '</div>' +
 
@@ -787,7 +775,7 @@
             });
         });
 
-        var $after = $('.menu__list [data-action=\"movie\"], .menu__list [data-action=\"tv\"]').first().parent();
+        var $after = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').first().parent();
 
         if ($after.length) {
             $after.after(item);
@@ -812,11 +800,7 @@
 
         // Инициализация Rutor Plugin
         rutorPlugin = new RutorPlugin();
-        rutorPlugin.initialize().then(function() {
-            console.log('[V10] Rutor Plugin инициализирован');
-        }).catch(function(error) {
-            console.error('[V10] Ошибка инициализации Rutor Plugin:', error);
-        });
+        rutorPlugin.initialize();
 
         Lampa.Listener.follow('app', function (e) {
 
