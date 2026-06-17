@@ -123,6 +123,14 @@
     }
 
     // ================================================================
+    //  НОРМАЛИЗАЦИЯ КЛЮЧА ДЛЯ ДЕДУПЛИКАЦИИ (совпадает с worker.js)
+    // ================================================================
+    function cardDedupeKey(item) {
+        var t = (item.title || item.name || '').replace(/[^а-яА-ЯёЁa-zA-Z0-9]/g, '').toLowerCase().slice(0, 40);
+        return t;
+    }
+
+    // ================================================================
     //  API SERVICE
     // ================================================================
     function RutorApiService() {
@@ -196,7 +204,7 @@
 
         // ============================================================
         // CATEGORY — загружает все категории для главного экрана
-        //            Каждая категория запрашивается с page=1, page_size=20
+        //            Дедупликация карточек МЕЖДУ категориями по нормализованному заголовку
         // ============================================================
         self.category = function (params, onSuccess) {
 
@@ -229,6 +237,20 @@
                             var ib = CATEGORIES.findIndex(function (c) { return c.url === b.url; });
                             return ia - ib;
                         });
+
+                        // ── Глобальная дедупликация по названию между всеми категориями ──
+                        // Каждое название появляется только в первой по порядку категории
+                        var globalSeen = {};
+                        rows.forEach(function (row) {
+                            row.results = row.results.filter(function (item) {
+                                var key = cardDedupeKey(item);
+                                if (!key) return true;
+                                if (globalSeen[key]) return false;
+                                globalSeen[key] = true;
+                                return true;
+                            });
+                        });
+
                         onSuccess(rows);
                     }
                 });
