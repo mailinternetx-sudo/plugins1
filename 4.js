@@ -12,14 +12,14 @@
     //  url — должен совпадать с тем, что понимает detect() в worker.js
     // ================================================================
     var CATEGORIES = [
-        { title: 'Топ 24 часа',                 url: 'top24',         method: 'movie' },
-        { title: 'Зарубежные фильмы',            url: 'movies',        method: 'movie' },
-        { title: 'Наши фильмы',                  url: 'movies_ru',     method: 'movie' },
-        { title: 'Зарубежные сериалы',           url: 'tv_shows',      method: 'tv'    },
-        { title: 'Русские сериалы',              url: 'tv_shows_ru',   method: 'tv'    },
-        { title: 'Русские детективные сериалы',  url: 'detective_ru',  method: 'tv'    },
-        { title: 'Телевизор',                    url: 'televizor',     method: 'tv'    },
-        { title: 'Юмор',                         url: 'humor',         method: 'tv'    }
+        { title: 'Топ 24 часа',                 url: 'top24',        method: 'movie' },
+        { title: 'Зарубежные фильмы',            url: 'movies',       method: 'movie' },
+        { title: 'Наши фильмы',                  url: 'movies_ru',    method: 'movie' },
+        { title: 'Зарубежные сериалы',           url: 'tv_shows',     method: 'tv'    },
+        { title: 'Русские сериалы',              url: 'tv_shows_ru',  method: 'tv'    },
+        { title: 'Русские детективные сериалы',  url: 'detective_ru', method: 'tv'    },
+        { title: 'Телевизор',                    url: 'televizor',    method: 'tv'    },
+        { title: 'Юмор',                         url: 'humor',        method: 'tv'    }
     ];
 
     // ================================================================
@@ -196,6 +196,7 @@
 
         // ============================================================
         // CATEGORY — загружает все категории для главного экрана
+        //            Каждая категория запрашивается с page=1, page_size=20
         // ============================================================
         self.category = function (params, onSuccess) {
 
