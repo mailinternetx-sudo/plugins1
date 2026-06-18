@@ -9,12 +9,8 @@
 
     // ================================================================
     //  КАТЕГОРИИ
-    //  Соответствие URL плагина → маршрут воркера:
-    //    movies_ru            → nashe_kino    (Наши фильмы,    KP movie+год)
-    //    tv_shows_ru          → nashi_seriali (Рус. сериалы,   KP tv+год → TMDB tv)
-    //    russian_detective_tv → russian_detective_tv (KP tv+год → TMDB tv)
-    //    televizor            → televizor     (KP show)
-    //    humor                → humor         (KP show)
+    //  page_size_preview — сколько карточек тянуть на главной (превью-строке)
+    //  page_size         — сколько на полной странице категории
     // ================================================================
     var CATEGORIES = [
         { title: 'Топ 24 часа',                  url: 'top24',                method: 'movie', page_size_preview: 25, page_size: 25 },
@@ -22,7 +18,7 @@
         { title: 'Наши фильмы',                  url: 'movies_ru',            method: 'movie', page_size_preview: 15, page_size: 15 },
         { title: 'Зарубежные сериалы',           url: 'tv_shows',             method: 'tv',    page_size_preview: 15, page_size: 15 },
         { title: 'Русские сериалы',              url: 'tv_shows_ru',          method: 'tv',    page_size_preview: 15, page_size: 15 },
-        { title: 'Русские детективные сериалы',  url: 'russian_detective_tv', method: 'tv',    page_size_preview: 15, page_size: 15 },
+        { title: 'Русские детективные сериалы',  url: 'russian_detective_tv', method: 'tv',    page_size_preview: 60, page_size: 60 },
         { title: 'Телевизор',                    url: 'televizor',            method: 'tv',    page_size_preview: 15, page_size: 15 },
         { title: 'Юмор',                         url: 'humor',                method: 'tv',    page_size_preview: 15, page_size: 15 }
     ];
@@ -92,51 +88,26 @@
         var method = item.method || detectMediaMethod(item);
 
         return {
-            id:                item.id,
-            title:             title,
-            name:              item.name || title,
-            original_title:    item.original_title || title,
-            overview:          item.overview || '',
-            poster_path:       posterPath,
-            backdrop_path:     backdropPath,
-            img:               img,
-            background_image:  bg,
-            vote_average:      item.vote_average || 0,
-            release_date:      item.release_date || '',
-            first_air_date:    item.first_air_date || '',
+            id: item.id,
+            title: title,
+            name: item.name || title,
+            original_title: item.original_title || title,
+            overview: item.overview || '',
+            poster_path: posterPath,
+            backdrop_path: backdropPath,
+            img: img,
+            background_image: bg,
+            vote_average: item.vote_average || 0,
+            release_date: item.release_date || '',
+            first_air_date: item.first_air_date || '',
             number_of_seasons: item.number_of_seasons || undefined,
-            type:              method,
-            method:            method,
-            release_quality:   item.release_quality || '',
-            source:            SOURCE_NAME,
-            promo_title:       item.promo_title || title,
-            promo:             item.promo || item.overview || ''
+            type: method,
+            method: method,
+            release_quality: item.release_quality || '',
+            source: SOURCE_NAME,
+            promo_title: item.promo_title || title,
+            promo: item.promo || item.overview || ''
         };
-    }
-
-    // ================================================================
-    //  ДЕДУПЛИКАЦИЯ НА СТОРОНЕ КЛИЕНТА
-    // ================================================================
-    var clientSeen = {};
-
-    function seenKey(card) {
-        var id = card && card.id ? String(card.id) : '';
-        var t  = ((card && (card.title || card.name)) || '').toLowerCase()
-                    .replace(/[^\u0400-\u04ffa-z0-9]/gi, '').slice(0, 80);
-        return id + '|' + t;
-    }
-
-    function dedupClient(catUrl, cards, resetPage) {
-        if (resetPage || !clientSeen[catUrl]) clientSeen[catUrl] = {};
-        var bag = clientSeen[catUrl];
-        var out = [];
-        for (var i = 0; i < cards.length; i++) {
-            var k = seenKey(cards[i]);
-            if (!k || bag[k]) continue;
-            bag[k] = 1;
-            out.push(cards[i]);
-        }
-        return out;
     }
 
     // ================================================================
@@ -145,6 +116,28 @@
     function RutorApiService() {
         var self = this;
         self.network = new Lampa.Reguest();
+
+        // ---------- Сквозной дедуп по категории на стороне клиента ----------
+        // (страховка на случай, если воркер вернул дубль)
+        var clientSeen = {}; // { url: { Set<string> } }
+        function seenKey(card) {
+            var id = card && card.id ? String(card.id) : '';
+            var t  = ((card && (card.title || card.name)) || '').toLowerCase()
+                        .replace(/[^\u0400-\u04ffa-z0-9]/gi, '').slice(0, 80);
+            return id + '|' + t;
+        }
+        function dedupClient(catUrl, cards, resetPage) {
+            if (resetPage || !clientSeen[catUrl]) clientSeen[catUrl] = {};
+            var bag = clientSeen[catUrl];
+            var out = [];
+            for (var i = 0; i < cards.length; i++) {
+                var k = seenKey(cards[i]);
+                if (!k || bag[k]) continue;
+                bag[k] = 1;
+                out.push(cards[i]);
+            }
+            return out;
+        }
 
         // ============================================================
         // FETCH RAW
@@ -155,17 +148,17 @@
                 function (json) {
                     if (!json || !json.results) {
                         onComplete({
-                            results:       [],
-                            total_pages:   1,
-                            page:          1,
+                            results: [],
+                            total_pages: 1,
+                            page: 1,
                             total_results: 0
                         });
                         return;
                     }
                     onComplete({
-                        results:       json.results.map(normalizeCard),
-                        page:          json.page          || 1,
-                        total_pages:   json.total_pages   || 1,
+                        results: json.results.map(normalizeCard),
+                        page: json.page || 1,
+                        total_pages: json.total_pages || 1,
                         total_results: json.total_results || json.results.length
                     });
                 },
@@ -174,9 +167,9 @@
                     if (onError) onError(err);
                     else {
                         onComplete({
-                            results:       [],
-                            total_pages:   1,
-                            page:          1,
+                            results: [],
+                            total_pages: 1,
+                            page: 1,
                             total_results: 0
                         });
                     }
@@ -197,8 +190,8 @@
                     if (!json || !json.results) { onComplete({ results: [] }); return; }
                     onComplete({
                         results: json.results.map(normalizeCard),
-                        page: 1,
-                        total_pages: 1
+                        page: json.page || 1,
+                        total_pages: json.total_pages || 1
                     });
                 },
                 function () { onComplete({ results: [] }); }
@@ -206,7 +199,7 @@
         };
 
         // ============================================================
-        // CATEGORY (главная, превью-строки)
+        // CATEGORY (главная — превью-строки)
         // ============================================================
         self.category = function (params, onSuccess) {
             var rows  = [];
@@ -218,14 +211,14 @@
                 var url = WORKER_URL + cat.url + '?page=1&page_size=' + pageSize;
 
                 self._fetchRaw(url, function (data) {
-                    // Сброс клиентского дедупа при загрузке превью (page=1)
+                    // сброс клиентского дедупа при загрузке превью (page=1)
                     var unique = dedupClient(cat.url, data.results, true);
 
                     rows.push({
-                        title:       cat.title,
-                        results:     unique,
-                        url:         cat.url,
-                        source:      SOURCE_NAME,
+                        title: cat.title,
+                        results: unique,
+                        url: cat.url,
+                        source: SOURCE_NAME,
                         total_pages: data.total_pages || 1
                     });
 
@@ -281,9 +274,9 @@
                 },
                 function () {
                     onComplete({
-                        results:       [],
-                        page:          page,
-                        total_pages:   1,
+                        results: [],
+                        page: page,
+                        total_pages: 1,
                         total_results: 0
                     });
                 }
@@ -303,16 +296,16 @@
                 card.type   = method;
             }
 
-            var savedImg     = params.img             || (card && card.img)              || '';
+            var savedImg     = params.img || (card && card.img) || '';
             var savedBg      = params.background_image || (card && card.background_image) || '';
-            var savedQuality = params.release_quality  || (card && card.release_quality)  || '';
+            var savedQuality = params.release_quality || (card && card.release_quality) || '';
 
             function fallbackFull(data) {
                 data = data || {};
-                if (!data.title)                        data.title            = card.title || card.name || '';
-                if (!data.img             && savedImg)  data.img              = savedImg;
-                if (!data.background_image && savedBg)  data.background_image = savedBg;
-                if (!data.release_quality && savedQuality) data.release_quality = savedQuality;
+                if (!data.title)            data.title = card.title || card.name || '';
+                if (!data.img && savedImg) data.img = savedImg;
+                if (!data.background_image && savedBg)     data.background_image = savedBg;
+                if (!data.release_quality && savedQuality) data.release_quality  = savedQuality;
                 data.type   = method;
                 data.method = method;
                 for (var k in card) {
@@ -332,9 +325,9 @@
                     if (!data || !data.title) {
                         fallbackFull(data);
                     } else {
-                        if (!data.img             && savedImg)     data.img              = savedImg;
+                        if (!data.img && savedImg) data.img = savedImg;
                         if (!data.background_image && savedBg)     data.background_image = savedBg;
-                        if (!data.release_quality  && savedQuality) data.release_quality = savedQuality;
+                        if (!data.release_quality && savedQuality) data.release_quality  = savedQuality;
                         data.type   = method;
                         data.method = method;
                         onSuccess(data);
@@ -349,30 +342,30 @@
     //  MENU
     // ================================================================
     function addMenuItem() {
-        if ($('.menu__item[data-action="v10"]').length) return;
+        if ($('.menu__item[data-action=\"v10\"]').length) return;
 
         var item = $(
-            '<li class="menu__item selector" data-action="v10">' +
-                '<div class="menu__ico">' +
-                    '<svg height="36" viewBox="0 0 24 24" width="36" fill="currentColor">' +
+            '<li class=\"menu__item selector\" data-action=\"v10\">' +
+                '<div class=\"menu__ico\">' +
+                    '<svg height=\"36\" viewBox=\"0 0 24 24\" width=\"36\" fill=\"currentColor\">' +
                         '<path d="M12 2L2 8V20H8V14H16V20H22V8L12 2ZM4 10L12 6L20 10V18H17V12H7V18H4V10Z"/>' +
                         '<path d="M9 13H15V15H9V13Z"/>' +
                     '</svg>' +
                 '</div>' +
-                '<div class="menu__text">' + SOURCE_NAME + '</div>' +
+                '<div class=\"menu__text\">' + SOURCE_NAME + '</div>' +
             '</li>'
         );
 
         item.on('hover:enter', function () {
             Lampa.Activity.push({
-                title:     SOURCE_NAME,
+                title: SOURCE_NAME,
                 component: 'category',
-                source:    SOURCE_NAME,
-                method:    'category'
+                source: SOURCE_NAME,
+                method: 'category'
             });
         });
 
-        var $after = $('.menu__list [data-action="movie"], .menu__list [data-action="tv"]').first().parent();
+        var $after = $('.menu__list [data-action=\"movie\"], .menu__list [data-action=\"tv\"]').first().parent();
         if ($after.length) $after.after(item);
         else               $('.menu__list').append(item);
     }
