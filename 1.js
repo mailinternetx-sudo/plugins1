@@ -115,7 +115,11 @@
             release_quality: item.release_quality || '',
             source: SOURCE_NAME,
             promo_title: item.promo_title || title,
-            promo: item.promo || item.overview || ''
+            promo: item.promo || item.overview || '',
+            genres: item.genres_list || item.genres || [],
+            vote_count: item.vote_count_kp || item.vote_count_imdb || item.vote_count || 0,
+            episodes_total: item.episodes_total || undefined,
+            status: item.status || ''
         };
     }
 
@@ -336,7 +340,7 @@
             '45.144.53.25:37940',
             '95.67.104.126:43871',
             '178.150.115.242:8090',
-            '95.165.134.227:8090'
+            '95.165.134.227:8090',
             'https://ts.maxvol.pro/'
         ];
 
