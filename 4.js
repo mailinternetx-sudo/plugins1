@@ -18,7 +18,7 @@
     if (window.v10_all_in_one_ready) return;
     window.v10_all_in_one_ready = true;
 
-    var SOURCE_NAME = 'V10';
+    var SOURCE_NAME = 'V10_2_2';
     var WORKER_URL  = 'https://my-proxy-worker.mail-internetx.workers.dev/';
 
     var TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
@@ -323,10 +323,9 @@
             );
         };
     }
-
+        // ================================================================
     // ================================================================
-    // ================================================================
-    //  МОДУЛЬ 2. TORRSERVER SWITCHER
+    //  МОДУЛЬ 2. TORRSERVER SWITCHER  (исправлен: проверка через /echo)
     // ================================================================
     // ================================================================
     var TS = (function () {
@@ -365,8 +364,9 @@
             return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
         }
 
+        // Проверка через /echo — стандартный health-endpoint TorrServer
         function checkServer(url, cb) {
-            var full = normalizeUrl(url);
+            var full = normalizeUrl(url) + '/echo';
             var done = false;
             var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
 
@@ -378,16 +378,16 @@
             }, CHECK_TIMEOUT);
 
             try {
-                fetch(full + '/', {
+                fetch(full, {
                     method: 'GET',
-                    mode: 'no-cors',
                     cache: 'no-store',
                     signal: controller ? controller.signal : undefined
-                }).then(function () {
+                }).then(function (res) {
                     if (done) return;
                     done = true;
                     clearTimeout(timer);
-                    cb(true);
+                    // /echo отдаёт текст версии (MatriX.xxx) → 200 = живой
+                    cb(res && (res.ok || res.status === 200));
                 })['catch'](function () {
                     if (done) return;
                     done = true;
@@ -399,14 +399,9 @@
             }
         }
 
-        // Пытается измерить реальную скорость отдачи сервера: делает
-        // обычный (не no-cors) запрос, чтобы иметь доступ к телу ответа
-        // и посчитать байты/сек. Если у сервера не настроен CORS — запрос
-        // упадёт с ошибкой сети ДО того, как браузер что-то отдаст на
-        // чтение; в этом случае откатываемся на простой no-cors пинг и
-        // показываем только время отклика (мс) вместо скорости.
+        // Измерение отклика через /echo
         function measureSpeed(rawUrl, cb) {
-            var full = normalizeUrl(rawUrl);
+            var full = normalizeUrl(rawUrl) + '/echo';
             var start = nowMs();
             var done = false;
             var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -418,36 +413,30 @@
                 cb(result);
             }
 
-            function fallbackPing() {
-                var pingStart = nowMs();
-                checkServer(rawUrl, function (ok) {
-                    finish({ ok: ok, ms: ok ? Math.round(nowMs() - pingStart) : 0, kbps: 0 });
-                });
-            }
-
             var timer = setTimeout(function () {
                 if (done) return;
                 if (controller) { try { controller.abort(); } catch (e) {} }
-                fallbackPing();
+                finish({ ok: false, ms: 0, kbps: 0 });
             }, CHECK_TIMEOUT);
 
             try {
-                fetch(full + '/', {
+                fetch(full, {
                     method: 'GET',
                     cache: 'no-store',
                     signal: controller ? controller.signal : undefined
                 }).then(function (res) {
-                    return res.blob();
-                }).then(function (blob) {
-                    var elapsed = nowMs() - start;
-                    var bytes   = blob ? blob.size : 0;
-                    var kbps    = (bytes > 0 && elapsed > 0) ? (bytes / 1024) / (elapsed / 1000) : 0;
-                    finish({ ok: true, ms: Math.round(elapsed), kbps: kbps });
+                    return res.text().then(function (text) {
+                        var elapsed = nowMs() - start;
+                        var ok = res && (res.ok || res.status === 200) && text && text.length > 0;
+                        // /echo обычно маленький, скорость в КБ/с почти не информативна —
+                        // показываем время отклика
+                        finish({ ok: !!ok, ms: Math.round(elapsed), kbps: 0 });
+                    });
                 })['catch'](function () {
-                    fallbackPing();
+                    finish({ ok: false, ms: 0, kbps: 0 });
                 });
             } catch (e) {
-                fallbackPing();
+                finish({ ok: false, ms: 0, kbps: 0 });
             }
         }
 
@@ -488,14 +477,11 @@
         }
 
         function pickServer(mode) {
-            noty('Проверка скорости серверов TorrServer…');
+            noty('Проверка серверов TorrServer…');
 
             checkAll(function (results) {
                 var currentUrl = mode === 'primary' ? getPrimary() : getBackup();
 
-                // Сначала рабочие сервера, среди них — от самого быстрого
-                // (больше КБ/с) к самому медленному; если скорость не
-                // удалось измерить (нет CORS), сортируем по времени отклика.
                 var sorted = results.slice().sort(function (a, b) {
                     if (a.ok !== b.ok) return a.ok ? -1 : 1;
                     if (a.kbps !== b.kbps) return b.kbps - a.kbps;
@@ -604,10 +590,9 @@
 
         return { init: init, pick: pickServer };
     })();
-
+        // ================================================================
     // ================================================================
-    // ================================================================
-    //  МОДУЛЬ 3. КАТАЛОГ ПАРСЕРОВ (по мотивам LME PubTorr)
+    //  МОДУЛЬ 3. КАТАЛОГ ПАРСЕРОВ (health-check исправлен)
     // ================================================================
     // ================================================================
     var PARSERS = (function () {
@@ -627,7 +612,6 @@
             { id: 'jac_red_ru',          name: 'jac-red.ru',   settings: { url: 'jac-red.ru',           key: '',        parser_torrent_type: 'jackett' } }
         ];
 
-        // кэш проверок на 10 минут
         var cache = {};
         var TTL = 10 * 60 * 1000;
 
@@ -641,7 +625,11 @@
             var s    = parser.settings;
             var type = s.parser_torrent_type || 'jackett';
             var pre  = /^https?:\/\//.test(s.url) ? '' : protocol();
-            var base = type === 'prowlarr' ? '/api/v1/health' : '/api/v2.0/indexers/status:healthy/results';
+            // Jackett: /api/v2.0/indexers/status:healthy/results/torznab
+            // Prowlarr: /api/v1/health
+            var base = type === 'prowlarr'
+                ? '/api/v1/health'
+                : '/api/v2.0/indexers/status:healthy/results/torznab';
             return pre + s.url + base + '?apikey=' + (s.key || '');
         }
 
@@ -658,7 +646,6 @@
             return p ? p.name : 'Не выбран';
         }
 
-        // Применяет выбранный парсер в штатные ключи Lampa
         function applySelected(id) {
             var parserId = id || getSelectedId();
             var parser   = getById(parserId);
@@ -809,7 +796,6 @@
 
         function init() {
             addSettings();
-            // При старте восстанавливаем ранее выбранный парсер в ключи Lampa
             if (getSelectedId() !== NO_PARSER) applySelected();
         }
 
